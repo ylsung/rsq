@@ -8,3 +8,6 @@
 [submodule "third-party/fast-hadamard-transform"]
 	path = third-party/fast-hadamard-transform
 	url = git@github.com:Dao-AILab/fast-hadamard-transform.git
+[submodule "third-party/quip-sharp"]
+	path = third-party/quip-sharp
+	url = git@github.com:Cornell-RelaxML/quip-sharp.git
