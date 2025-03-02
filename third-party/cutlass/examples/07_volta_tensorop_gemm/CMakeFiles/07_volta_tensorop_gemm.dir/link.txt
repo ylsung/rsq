@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/07_volta_tensorop_gemm.dir/objects1.rsp -o 07_volta_tensorop_gemm @CMakeFiles/07_volta_tensorop_gemm.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

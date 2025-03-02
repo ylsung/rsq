@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/28_ampere_3xtf32_fast_accurate_tensorop_fprop.dir/objects1.rsp -o 28_ampere_3xtf32_fast_accurate_tensorop_fprop @CMakeFiles/28_ampere_3xtf32_fast_accurate_tensorop_fprop.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

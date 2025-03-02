@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/13_fused_two_gemms_f16_sm80_rf.dir/objects1.rsp -o 13_fused_two_gemms_f16_sm80_rf @CMakeFiles/13_fused_two_gemms_f16_sm80_rf.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

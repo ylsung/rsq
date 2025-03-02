@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/35_gemm_softmax.dir/objects1.rsp -o 35_gemm_softmax @CMakeFiles/35_gemm_softmax.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

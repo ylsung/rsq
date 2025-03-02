@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/42_ampere_tensorop_group_conv.dir/objects1.rsp -o 42_ampere_tensorop_group_conv @CMakeFiles/42_ampere_tensorop_group_conv.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

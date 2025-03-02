@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/23_ampere_gemm_operand_reduction_fusion.dir/objects1.rsp -o 23_ampere_gemm_operand_reduction_fusion @CMakeFiles/23_ampere_gemm_operand_reduction_fusion.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

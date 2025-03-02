@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/33_ampere_3xtf32_tensorop_symm.dir/objects1.rsp -o 33_ampere_3xtf32_tensorop_symm @CMakeFiles/33_ampere_3xtf32_tensorop_symm.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

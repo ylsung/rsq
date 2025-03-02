@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/18_ampere_fp64_tensorop_affine2_gemm.dir/objects1.rsp -o 18_ampere_fp64_tensorop_affine2_gemm @CMakeFiles/18_ampere_fp64_tensorop_affine2_gemm.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

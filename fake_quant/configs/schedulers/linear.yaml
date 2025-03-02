@@ -1,0 +1,4 @@
+method_name: LinearScheduler
+params:
+  start_value: 1
+  end_value: 3

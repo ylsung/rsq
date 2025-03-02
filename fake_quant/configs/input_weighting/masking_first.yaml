@@ -1,0 +1,3 @@
+method_name: AdhocMaskingWeighting
+params:
+  method_type: first_half

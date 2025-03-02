@@ -1,0 +1,14 @@
+AUTHORS
+LICENSE
+README.md
+setup.py
+csrc/fast_hadamard_transform.cpp
+csrc/fast_hadamard_transform_cuda.cu
+fast_hadamard_transform/__init__.py
+fast_hadamard_transform/fast_hadamard_transform_interface.py
+fast_hadamard_transform.egg-info/PKG-INFO
+fast_hadamard_transform.egg-info/SOURCES.txt
+fast_hadamard_transform.egg-info/dependency_links.txt
+fast_hadamard_transform.egg-info/requires.txt
+fast_hadamard_transform.egg-info/top_level.txt
+tests/test_fast_hadamard_transform.py

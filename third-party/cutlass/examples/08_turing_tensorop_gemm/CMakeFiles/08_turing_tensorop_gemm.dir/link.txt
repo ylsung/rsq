@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/08_turing_tensorop_gemm.dir/objects1.rsp -o 08_turing_tensorop_gemm @CMakeFiles/08_turing_tensorop_gemm.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

@@ -1,0 +1,4 @@
+method_name: EndPointsPeakScheduler
+params:
+  min_value: 1
+  max_value: 3

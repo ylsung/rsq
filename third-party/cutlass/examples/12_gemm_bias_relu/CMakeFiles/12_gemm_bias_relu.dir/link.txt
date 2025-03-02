@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/12_gemm_bias_relu.dir/objects1.rsp -o 12_gemm_bias_relu @CMakeFiles/12_gemm_bias_relu.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

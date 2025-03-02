@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ -fPIC -shared -Wl,-soname,libcutlass_gemm_sm80_u4_i16864gemm_u4.so -o libcutlass_gemm_sm80_u4_i16864gemm_u4.so @CMakeFiles/cutlass_library_gemm_sm80_u4_i16864gemm_u4.dir/objects1.rsp @CMakeFiles/cutlass_library_gemm_sm80_u4_i16864gemm_u4.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

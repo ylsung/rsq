@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/53_hopper_gemm_permute.dir/objects1.rsp -o 53_hopper_gemm_permute @CMakeFiles/53_hopper_gemm_permute.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

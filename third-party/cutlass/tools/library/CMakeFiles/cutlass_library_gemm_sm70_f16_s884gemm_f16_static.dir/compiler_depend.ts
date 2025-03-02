@@ -1,0 +1,2 @@
+# CMAKE generated file: DO NOT EDIT!
+# Timestamp file for compiler generated dependencies management for cutlass_library_gemm_sm70_f16_s884gemm_f16_static.

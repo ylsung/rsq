@@ -1,0 +1,7 @@
+method_name: MagnitudeWeighting
+params:
+  min_value: 1
+  max_value: 3
+  normalize: null
+  input_or_output: "input"
+  dim: 1

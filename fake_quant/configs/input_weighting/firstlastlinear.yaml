@@ -1,0 +1,3 @@
+method_name: FirstLastLinearMaskingWeighting
+params:
+  half_none_zero_num: 512

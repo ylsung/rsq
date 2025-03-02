@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ -fPIC -shared -Wl,-soname,libcutlass_rank_k_sm80_gz884syrk.so -o libcutlass_rank_k_sm80_gz884syrk.so @CMakeFiles/cutlass_library_rank_k_sm80_gz884syrk.dir/objects1.rsp @CMakeFiles/cutlass_library_rank_k_sm80_gz884syrk.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

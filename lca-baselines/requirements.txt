@@ -1,0 +1,8 @@
+tree-sitter>=0.22.3
+sacrebleu>=2.4.2
+together>=1.2.0
+openai>=1.31.0
+tree-sitter-python
+rank-bm25>=0.2.2
+black>=24.4.2
+isort>=5.13.2

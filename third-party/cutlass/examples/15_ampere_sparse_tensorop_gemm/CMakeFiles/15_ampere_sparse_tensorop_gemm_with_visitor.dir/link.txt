@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/15_ampere_sparse_tensorop_gemm_with_visitor.dir/objects1.rsp -o 15_ampere_sparse_tensorop_gemm_with_visitor @CMakeFiles/15_ampere_sparse_tensorop_gemm_with_visitor.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

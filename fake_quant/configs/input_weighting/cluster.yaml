@@ -1,0 +1,7 @@
+method_name: ClusterWeighting
+params:
+  min_value: 1
+  max_value: 3
+  normalize: "default"
+  input_or_output: "output"
+  reverse: true

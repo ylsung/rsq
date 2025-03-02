@@ -1,0 +1,1 @@
+/usr/lib/nvidia-cuda-toolkit/bin/g++ @CMakeFiles/22_quaternion_conv.dir/objects1.rsp -o 22_quaternion_conv @CMakeFiles/22_quaternion_conv.dir/linkLibs.rsp -L"/usr/lib/x86_64-linux-gnu/stubs" -L"/usr/lib/x86_64-linux-gnu"

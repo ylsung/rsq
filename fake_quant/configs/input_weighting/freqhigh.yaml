@@ -1,0 +1,5 @@
+method_name: TokenFreqWeighting
+params:
+  min_value: 1
+  max_value: 3
+  normalize: "default"

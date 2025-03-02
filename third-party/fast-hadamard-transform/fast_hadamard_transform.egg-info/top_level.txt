@@ -1,0 +1,2 @@
+fast_hadamard_transform
+fast_hadamard_transform_cuda
