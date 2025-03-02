@@ -1,3 +1,0 @@
-# ninja log v5
-0	13168	1740953539171595352	/playpen-ssd/ylsung/rsq/third-party/fast-hadamard-transform/build/temp.linux-x86_64-cpython-311/csrc/fast_hadamard_transform.o	21277038e3e3ebdd
-0	54576	1740953580539915118	/playpen-ssd/ylsung/rsq/third-party/fast-hadamard-transform/build/temp.linux-x86_64-cpython-311/csrc/fast_hadamard_transform_cuda.o	b533758a01136c18
