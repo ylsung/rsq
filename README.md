@@ -20,7 +20,7 @@ pip install -e .
 ```
 
 If you see the following errors when you import "fast_hadamard_transformation"
-```
+```g
 ImportError: .../libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by .../rsq/third-party/fast-had
 amard-transform/fast_hadamard_transform_cuda.cpython-311-x86_64-linux-gnu.so)
 ```
