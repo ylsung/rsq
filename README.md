@@ -13,7 +13,6 @@ Previous Layer-wise quantization methods typically quantize the weights of each 
 ## Installation
 Install the QuaRot kernel, QuIP\# kernel, and other requirements.
 
-
 ```bash
 conda create -n "rsq" python=3.11.5
 pip install -r requirements.txt
@@ -31,11 +30,14 @@ You can use the following script to check if GLIBCXX_3.4.32 is not in your envir
 find $CONDA_PREFIX -name "libstdc++.so.6" -exec strings {} \; | grep GLIBCXX
 ```
 
-Try to update the latest GLIBCXX
+You can solve the issue by installing the latest GLIBCXX
 ```
 conda install -c conda-forge libstdcxx-ng
 ```
 Or see [this](https://stackoverflow.com/questions/76974555/glibcxx-3-4-32-not-found-error-at-runtime-gcc-13-2-0) for other solutions.
+
+## Environment Variables
+Set the environment variables (`CODEPATH`, `CHECKPOINT_PATH`) in `scripts/env.sh`. `CODEPATH` should be set as the directory of this repo. For example, set it to `XXX/rsq` if this repo's directory is XXX/rsq. Be sure to manually create the `CHECKPOINT_PATH` before using the scripts.
 
 ## Dataset
 
@@ -55,7 +57,7 @@ Follow the original readme to download the dataset if necessary.
 
 Run experiment sequentially on one GPU
 ```bash
-bash scripts/run_bash.sh [gpu_id] [script]
+bash scripts/job_sequential.sh [gpu_id] [script]
 ```
 
 Run experiment in parallel over GPUs 
@@ -67,8 +69,10 @@ Explanation and example to run the scripts
 ```bash
 [gpu_id] = 0 use the 0th GPU
 [gpu_id] = 2 use the 2nd GPU
+
 [num_activated_gpus] = 3 the script will see GPU_ID from 0 - 2
 [num_activated_gpus] = 8 the script will see GPU_ID from 0 - 7
+
 [activated_gpu] = "0,1" use the 0th and 1st GPU
 [activated_gpu] = "2,7" use the 2nd and 7th GPU
 
@@ -86,7 +90,7 @@ Explanation and example to run the scripts
 **[Note]**
 * You can change the model from LLaMA to Mistral or Qwen inside the scripts.
 * You can change the scaling strategy in `run_rsq.sh` and `run_rsq_expand.sh`.
-* Update the actual checkpoint path in `run_eval.sh` and `run_long_eval.sh`.
+* Update the actual checkpoint path in `run_eval.sh` and `run_long_eval.sh` while using them.
 
 ## Citation 
 
