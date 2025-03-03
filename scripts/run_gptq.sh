@@ -1,9 +1,7 @@
 declare -a jobs
 
-attn_weighting=attncon
 nsamples=256
 train_seqlen=4096
-val_size=0
 method_name=gptq
 
 
@@ -38,7 +36,6 @@ do
         --w_bits ${w_bits} --w_clip \
         --seed ${seed} \
         --add_until_fail \
-        --val_size ${val_size} \
         --nsamples ${nsamples} \
         --train_seqlen ${train_seqlen} \
         --save_name ${save_name} \

@@ -1,6 +1,6 @@
 declare -a jobs
 
-scaling_strategy=attncon
+scaling_strategy=heuristic
 nsamples=256
 train_seqlen=4096
 method_name=rsq
@@ -26,14 +26,19 @@ source scripts/env.sh
 
 # scaling_strategy can be attncon actdiff actnorm tokenfreq tokensim
 
-# min_value search over 0.1 0.05 0.02 0.01 0.005
-for min_value in 0.005
+# 0_8 means split the input to 8 chunks and take the first chunk
+# 0_31_32 means split the input to 32 chunks and take the first and last chunks
+
+# follow the same logic
+# 5_16 means split the input to 16 chunks and take the 6th chunk
+# 7_27_64 means split the input to 64 chunks and take the 8th and 28th chunk
+for range in 0_8 0_31_32
 do
     for w_bits in 3
     do
         for seed in 0 1 2
         do
-            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_min${min_value}@${seed}
+            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_${range}@${seed}
 
             job="eval cd ${CODEPATH}; \
             python fake_quant/main.py \
@@ -41,8 +46,7 @@ do
             --rotate \
             --w_bits ${w_bits} --w_clip \
             --seed ${seed} \
-            --min_value ${min_value} \
-            --max_value 1 \
+            --adhoc_weighting_method_type ${range} \
             --add_until_fail \
             --module_input_weighting_yaml fake_quant/configs/input_weighting/${scaling_strategy}.yaml \
             --nsamples ${nsamples} \
@@ -59,13 +63,13 @@ do
 done
 
 # Evaluation for Wiki-len512, Wiki-len8192, MMLU, GSM8K, TruthfulQA
-for min_value in 0.005
+for range in 0_8 0_31_32
 do
     for w_bits in 3
     do
         for seed in 0 1 2
         do
-            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_min${min_value}@${seed}
+            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_${range}@${seed}
             
             mapfile new_jobs < <(add_additional_jobs "${model_name}" "${save_name_prefix}" ${save_name} True)
 

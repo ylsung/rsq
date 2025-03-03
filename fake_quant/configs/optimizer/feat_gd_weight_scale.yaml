@@ -1,8 +1,0 @@
-method_name: GradientOptimizer
-params:
-  quant_parameters_requires_grad: scale|zero
-  weight_parameters_requires_grad: weight_fp
-  quant_lr: 3.0e-7
-  weight_lr: 1.0e-7
-  verbose: true
-  local_batch_size: 4

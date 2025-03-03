@@ -97,13 +97,7 @@ class GPTQ:
     def __init__(
         self, 
         layer, 
-        normalize_over_tokens=False, 
-        normalize_hessian=False, 
         add_until_fail=False,
-        low_rank_before=False,
-        low_rank_after=False,
-        rank_ratio=1.0,
-        rank_take_top=False,
     ):
         self.layer = layer
         self.dev = self.layer.weight.device
@@ -112,15 +106,9 @@ class GPTQ:
         self.columns = W.shape[1]
         self.H = torch.zeros((self.columns, self.columns), device=self.dev)
         self.nsamples = 0
-        self.normalize_over_tokens = normalize_over_tokens
-        self.normalize_hessian = normalize_hessian
         self.add_until_fail = add_until_fail
-        self.low_rank_before = low_rank_before
-        self.low_rank_after = low_rank_after
-        self.rank_ratio = rank_ratio
-        self.rank_take_top = rank_take_top
 
-    def add_batch(self, inp, out, weighting=None, feature_weighting=None, sequence_weighting=None):
+    def add_batch(self, inp, out, weighting=None):
         
         if len(inp.shape) == 2:
             inp = inp.unsqueeze(0)
@@ -138,33 +126,18 @@ class GPTQ:
             weighting = weighting / weighting.sum() * weighting.shape[0]
             inp = inp * weighting.to(inp.device) ** 0.5
         # self.H += 2 / self.nsamples * inp.matmul(inp.t())
-        
-        if feature_weighting is not None:
-            feature_weighting = feature_weighting / feature_weighting.sum() * feature_weighting.shape[0]
-            inp = feature_weighting.to(inp.device)[:, None] ** 0.5 * inp
-            
-        if sequence_weighting is not None:
-            inp = sequence_weighting.to(inp.device) ** 0.5 * inp
-
-        if self.normalize_over_tokens:
-            inp = inp / inp.shape[-1] ** 0.5
 
         self.H += inp.matmul(inp.t())
 
     def fasterquant(
-        self, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, quant=True
+        self, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False
     ):
         W = self.layer.weight.data.clone()
         W = W.float()
 
-        tick = time.time()
-
         if not self.quantizer.ready():
             self.quantizer.find_params(W)
             
-        if not quant:
-            return
-
         H = self.H
         del self.H
         dead = torch.diag(H) == 0
@@ -188,47 +161,27 @@ class GPTQ:
         Losses = torch.zeros_like(W)
         Q = torch.zeros_like(W)
         
-        if self.low_rank_before and self.rank_ratio < 1.0:
-            rank_to_use = int(self.rank_ratio * H.shape[0])
-            H = low_rank_approximation(H, rank_to_use, take_top=True)
-
-        if self.normalize_hessian:
-            H.div_(torch.mean(torch.diag(H)))
-            diag = torch.arange(self.columns, device=self.dev)
-            H[diag, diag] += percdamp
+        damp = percdamp * torch.mean(torch.diag(H))
+        diag = torch.arange(self.columns, device=self.dev)
+        
+        if self.add_until_fail:
+            multiplier = 1
+            
+            while multiplier < 50:
+                try:
+                    H[diag, diag] += damp
+                    H = torch.linalg.cholesky(H)
+                    H = torch.cholesky_inverse(H)
+                    H = torch.linalg.cholesky(H, upper=True)
+                    break
+                except:
+                    multiplier += 1
+        else:
+            H[diag, diag] += damp
             H = torch.linalg.cholesky(H)
             H = torch.cholesky_inverse(H)
             H = torch.linalg.cholesky(H, upper=True)
-        else:
-            damp = percdamp * torch.mean(torch.diag(H))
-            diag = torch.arange(self.columns, device=self.dev)
-            
-            if self.add_until_fail:
-                multiplier = 1
-                
-                while multiplier < 50:
-                    try:
-                        H[diag, diag] += damp
-                        H = torch.linalg.cholesky(H)
-                        H = torch.cholesky_inverse(H)
-                        H = torch.linalg.cholesky(H, upper=True)
-                        break
-                    except:
-                        multiplier += 1
-                        
-                print(multiplier)
-            else:
-                H[diag, diag] += damp
-                H = torch.linalg.cholesky(H)
-                H = torch.cholesky_inverse(H)
-                H = torch.linalg.cholesky(H, upper=True)
-                
-        if self.low_rank_after and self.rank_ratio < 1.0:
-            rank_to_use = int(self.rank_ratio * H.shape[0])
-            H = low_rank_approximation(H, rank_to_use, take_top=self.rank_take_top)
-            
-        # except:
-            # import pdb; pdb.set_trace()
+
         Hinv = H
 
         for i1 in range(0, self.columns, blocksize):
@@ -280,7 +233,7 @@ class GPTQ:
             pprint.pprint(self.quantizer.bits, self.quantizer.scale, self.quantizer.zero_point)
             raise ValueError('NaN in weights')
         
-    def get_quantize_linear(self, qat=True):
+    def get_quantize_linear(self, qat=False):
         quantized_weight = self.quantizer.quantize(
             self.layer.weight.data,
             qat,
@@ -296,724 +249,6 @@ class GPTQ:
         utils.cleanup_memory(verbos=False)
 
 
-class AdaptiveGPTQ(GPTQ):
-    def __init__(self, layer, normalize_over_tokens=False, values_to_try=[0.001, 0.003, 0.01, 0.03, 0.1, 0.3], train_in_val=False):
-        super().__init__(layer, normalize_over_tokens)
-        self.H_val = torch.zeros((self.columns, self.columns), device=self.dev)
-        self.nsamples_val = 0
-        self.values_to_try = values_to_try
-        self.values_to_try.insert(0, 0.0)
-        self.train_in_val = train_in_val
-
-    def add_batch_val(self, inp, out, weighting=None, feature_weighting=None):
-        if len(inp.shape) == 2:
-            inp = inp.unsqueeze(0)
-        tmp = inp.shape[0]
-        if len(inp.shape) == 3:
-            inp = inp.reshape((-1, inp.shape[-1]))
-        inp = inp.t()
-        self.H_val *= self.nsamples_val / (self.nsamples_val + tmp)
-        self.nsamples_val += tmp
-        # inp = inp.float()
-        inp = math.sqrt(2 / self.nsamples_val) * inp.float()
-
-        if weighting is not None:
-            # normalize weighting
-            weighting = weighting / weighting.sum() * weighting.shape[0]
-            inp = inp * weighting.to(inp.device) ** 0.5
-            
-        if feature_weighting is not None:
-            inp = inp * feature_weighting.to(inp.device) ** 0.5
-
-        if self.normalize_over_tokens:
-            inp = inp / inp.shape[-1] ** 0.5
-
-        self.H_val += inp.matmul(inp.t())
-        
-    def _channelwise_squared_error(self, XTX: torch.Tensor, weight: torch.Tensor, reference_weight: torch.Tensor):
-        """
-        Compute per-channel squared error between X @ weight_or_weights and X @ reference_weight
-        :param XTX: pairwise products of input features matmul(X.transpose(), X), shape: [in_features, in_features]
-        :note: if XTX is divided by dataset size, this function will return *mean* squared error
-        :param weight: predicted/reconstructed weights of shape [*dims, out_features, in_features]
-        :param reference_weight: reference weight of shape [out_features, in_features]
-        :return: per-channel squared errors of shape [*dims, out_features]
-        """
-        XW_norm_square = torch.matmul(weight[..., :, None, :], (weight @ XTX)[..., :, :, None]).flatten(-3)
-        XWreference_norm_square = torch.bmm(reference_weight[:, None, :], (reference_weight @ XTX)[:, :, None]).flatten(-3)
-        dot_product = torch.matmul((reference_weight @ XTX)[:, None, :], weight[..., :, :, None]).flatten(-3)
-        return XW_norm_square - 2 * dot_product + XWreference_norm_square
-
-    def fasterquant(
-        self, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, quant=True
-    ):
-        W = self.layer.weight.data.clone()
-        W = W.float()
-
-        tick = time.time()
-
-        if not self.quantizer.ready():
-            self.quantizer.find_params(W)
-            
-        if not quant:
-            return
-        
-        values_to_try = self.values_to_try
-        
-        val_losses = []
-        
-        original_H = self.H.to("cpu")
-        original_W = W.to("cpu")
-        
-        del self.H
-
-        for value in values_to_try:
-            H = original_H.clone().to(self.dev)
-            W = original_W.clone().to(self.dev)
-            Losses = torch.zeros_like(W)
-            Q = torch.zeros_like(W)
-            
-            dead = torch.diag(H) == 0
-            H[dead, dead] = 1
-            W[:, dead] = 0
-
-            if static_groups:
-                import copy
-                groups = []
-                for i in range(0, self.columns, groupsize):
-                    quantizer = copy.deepcopy(self.quantizer)
-                    quantizer.find_params(W[:, i:(i + groupsize)])
-                    groups.append(quantizer)
-
-            if actorder:
-                perm = torch.argsort(torch.diag(H), descending=True)
-                W = W[:, perm]
-                H = H[perm][:, perm]
-                invperm = torch.argsort(perm)
-            
-            diag = torch.arange(self.columns, device=self.dev)
-
-            # print(H.abs().mean(), W.abs().mean()) # should be the same for all values
-
-            try:
-                damp = value * torch.mean(torch.diag(H))
-                H[diag, diag] += damp
-                H = torch.linalg.cholesky(H)
-                H = torch.cholesky_inverse(H)
-                H = torch.linalg.cholesky(H, upper=True)
-                # except:
-                    # import pdb; pdb.set_trace()
-                Hinv = H
-            except:
-                val_losses.append(float("inf"))
-                # cannot get H inv, don't need to do anything more
-                # print(f"val: {value}, val_loss: {val_losses[-1]}")
-                continue
-
-            for i1 in range(0, self.columns, blocksize):
-                i2 = min(i1 + blocksize, self.columns)
-                count = i2 - i1
-
-                W1 = W[:, i1:i2].clone()
-                Q1 = torch.zeros_like(W1)
-                Err1 = torch.zeros_like(W1)
-                Losses1 = torch.zeros_like(W1)
-                Hinv1 = Hinv[i1:i2, i1:i2]
-
-                for i in range(count):
-                    w = W1[:, i]
-                    d = Hinv1[i, i]
-
-                    if groupsize != -1:
-                        if not static_groups:
-                            if (i1 + i) % groupsize == 0:
-                                self.quantizer.find_params(W[:, (i1 + i):(i1 + i + groupsize)])
-                        else:
-                            idx = i1 + i
-                            if actorder:
-                                idx = perm[idx]
-                            self.quantizer = groups[idx // groupsize]
-
-                    q = self.quantizer.forward(w.unsqueeze(1)).flatten()
-                    Q1[:, i] = q
-                    Losses1[:, i] = (w - q) ** 2 / d ** 2
-
-                    err1 = (w - q) / d
-                    W1[:, i:] -= err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
-                    Err1[:, i] = err1
-
-                Q[:, i1:i2] = Q1
-                Losses[:, i1:i2] = Losses1 / 2
-
-                W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
-                
-            if actorder:
-                Q = Q[:, invperm]
-            
-            if self.train_in_val:
-                val_loss = self._channelwise_squared_error(
-                    0.5 * self.H_val + 0.5 * original_H.to(self.dev), 
-                    Q,
-                    original_W.to(self.dev),
-                )
-            else:
-                val_loss = self._channelwise_squared_error(
-                    self.H_val, 
-                    Q, 
-                    original_W.to(self.dev),
-                )
-            
-            val_loss = val_loss.sum()
-            val_losses.append(val_loss.item())
-            
-            # print(f"val: {value}, val_loss: {val_losses[-1]} Q: {Q.to(self.layer.weight.data.dtype).abs().mean().item()}")
-            
-        del W
-        del H
-        del Q
-        
-        percdamp = values_to_try[val_losses.index(min(val_losses))]
-        logging.info(f"values: {values_to_try}")
-        logging.info(f"losses: {val_losses}, best_perdamp: {percdamp}")
-        
-        self.H = original_H.clone().to(self.dev)
-        return super().fasterquant(
-            blocksize=blocksize, percdamp=percdamp, groupsize=groupsize, actorder=actorder, static_groups=static_groups
-        )
-
-    def free(self):
-        self.H = None
-        self.H_val = None
-        self.Losses = None
-        self.Trace = None
-        torch.cuda.empty_cache()
-        utils.cleanup_memory(verbos=False)
-        
-        
-class AdaptiveLowRankGPTQ(GPTQ):
-    def __init__(self, 
-        layer, 
-        normalize_over_tokens=False, 
-        values_to_try=[0.95, 0.9, 0.7], 
-        train_in_val=False,
-        low_rank_before=False,
-        low_rank_after=False,
-        rank_ratio=1.0,
-        rank_take_top=False,
-    ):
-        super().__init__(
-            layer, 
-            normalize_over_tokens,
-            low_rank_before=low_rank_before,
-            low_rank_after=low_rank_after,
-            rank_ratio=rank_ratio,
-            rank_take_top=rank_take_top,
-        )
-        self.H_val = torch.zeros((self.columns, self.columns), device=self.dev)
-        self.nsamples_val = 0
-        self.values_to_try = values_to_try
-        self.values_to_try.insert(0, 1.0)
-        self.train_in_val = train_in_val
-
-    def add_batch_val(self, inp, out, weighting=None):
-        if len(inp.shape) == 2:
-            inp = inp.unsqueeze(0)
-        tmp = inp.shape[0]
-        if len(inp.shape) == 3:
-            inp = inp.reshape((-1, inp.shape[-1]))
-        inp = inp.t()
-        self.H_val *= self.nsamples_val / (self.nsamples_val + tmp)
-        self.nsamples_val += tmp
-        # inp = inp.float()
-        inp = math.sqrt(2 / self.nsamples_val) * inp.float()
-
-        if weighting is not None:
-            # normalize weighting
-            weighting = weighting / weighting.sum() * weighting.shape[0]
-            inp = inp * weighting.to(inp.device) ** 0.5
-
-        if self.normalize_over_tokens:
-            inp = inp / inp.shape[-1] ** 0.5
-
-        self.H_val += inp.matmul(inp.t())
-        
-    def _channelwise_squared_error(self, XTX: torch.Tensor, weight: torch.Tensor, reference_weight: torch.Tensor):
-        """
-        Compute per-channel squared error between X @ weight_or_weights and X @ reference_weight
-        :param XTX: pairwise products of input features matmul(X.transpose(), X), shape: [in_features, in_features]
-        :note: if XTX is divided by dataset size, this function will return *mean* squared error
-        :param weight: predicted/reconstructed weights of shape [*dims, out_features, in_features]
-        :param reference_weight: reference weight of shape [out_features, in_features]
-        :return: per-channel squared errors of shape [*dims, out_features]
-        """
-        XW_norm_square = torch.matmul(weight[..., :, None, :], (weight @ XTX)[..., :, :, None]).flatten(-3)
-        XWreference_norm_square = torch.bmm(reference_weight[:, None, :], (reference_weight @ XTX)[:, :, None]).flatten(-3)
-        dot_product = torch.matmul((reference_weight @ XTX)[:, None, :], weight[..., :, :, None]).flatten(-3)
-        return XW_norm_square - 2 * dot_product + XWreference_norm_square
-
-    def fasterquant(
-        self, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, quant=True
-    ):
-        W = self.layer.weight.data.clone()
-        W = W.float()
-
-        tick = time.time()
-
-        if not self.quantizer.ready():
-            self.quantizer.find_params(W)
-            
-        if not quant:
-            return
-        
-        values_to_try = self.values_to_try
-        
-        val_losses = []
-        
-        original_H = self.H.to("cpu")
-        original_W = W.to("cpu")
-        
-        del self.H
-
-        for value in values_to_try:
-            H = original_H.clone().to(self.dev)
-            W = original_W.clone().to(self.dev)
-            Losses = torch.zeros_like(W)
-            Q = torch.zeros_like(W)
-            
-            dead = torch.diag(H) == 0
-            H[dead, dead] = 1
-            W[:, dead] = 0
-
-            if static_groups:
-                import copy
-                groups = []
-                for i in range(0, self.columns, groupsize):
-                    quantizer = copy.deepcopy(self.quantizer)
-                    quantizer.find_params(W[:, i:(i + groupsize)])
-                    groups.append(quantizer)
-
-            if actorder:
-                perm = torch.argsort(torch.diag(H), descending=True)
-                W = W[:, perm]
-                H = H[perm][:, perm]
-                invperm = torch.argsort(perm)
-            
-            diag = torch.arange(self.columns, device=self.dev)
-
-            # print(H.abs().mean(), W.abs().mean()) # should be the same for all values
-            
-            if self.low_rank_before and value < 1.0:
-                rank_to_use = int(value * H.shape[0])
-                H = low_rank_approximation(H, rank_to_use, take_top=True)
-
-            try:
-                damp = percdamp * torch.mean(torch.diag(H))
-                H[diag, diag] += damp
-                H = torch.linalg.cholesky(H)
-                H = torch.cholesky_inverse(H)
-                H = torch.linalg.cholesky(H, upper=True)
-                # except:
-                    # import pdb; pdb.set_trace()
-            except:
-                val_losses.append(float("inf"))
-                # cannot get H inv, don't need to do anything more
-                # print(f"val: {value}, val_loss: {val_losses[-1]}")
-                continue
-            
-            if self.low_rank_after and value < 1.0:
-                rank_to_use = int(value * H.shape[0])
-                H = low_rank_approximation(H, rank_to_use, take_top=self.rank_take_top)
-            
-            Hinv = H
-
-            for i1 in range(0, self.columns, blocksize):
-                i2 = min(i1 + blocksize, self.columns)
-                count = i2 - i1
-
-                W1 = W[:, i1:i2].clone()
-                Q1 = torch.zeros_like(W1)
-                Err1 = torch.zeros_like(W1)
-                Losses1 = torch.zeros_like(W1)
-                Hinv1 = Hinv[i1:i2, i1:i2]
-
-                for i in range(count):
-                    w = W1[:, i]
-                    d = Hinv1[i, i]
-
-                    if groupsize != -1:
-                        if not static_groups:
-                            if (i1 + i) % groupsize == 0:
-                                self.quantizer.find_params(W[:, (i1 + i):(i1 + i + groupsize)])
-                        else:
-                            idx = i1 + i
-                            if actorder:
-                                idx = perm[idx]
-                            self.quantizer = groups[idx // groupsize]
-
-                    q = self.quantizer.forward(w.unsqueeze(1)).flatten()
-                    Q1[:, i] = q
-                    Losses1[:, i] = (w - q) ** 2 / d ** 2
-
-                    err1 = (w - q) / d
-                    W1[:, i:] -= err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
-                    Err1[:, i] = err1
-
-                Q[:, i1:i2] = Q1
-                Losses[:, i1:i2] = Losses1 / 2
-
-                W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
-                
-            if actorder:
-                Q = Q[:, invperm]
-            
-            if self.train_in_val:
-                val_loss = self._channelwise_squared_error(
-                    0.5 * self.H_val + 0.5 * original_H.to(self.dev), 
-                    Q,
-                    original_W.to(self.dev),
-                )
-            else:
-                val_loss = self._channelwise_squared_error(
-                    self.H_val, 
-                    Q, 
-                    original_W.to(self.dev),
-                )
-            
-            val_loss = val_loss.sum()
-            val_losses.append(val_loss.item())
-            
-            # print(f"val: {value}, val_loss: {val_losses[-1]} Q: {Q.to(self.layer.weight.data.dtype).abs().mean().item()}")
-            
-        del W
-        del H
-        del Q
-        
-        rank_ratio = values_to_try[val_losses.index(min(val_losses))]
-        logging.info(f"values: {values_to_try}")
-        logging.info(f"losses: {val_losses}, best_rank_ratio: {rank_ratio}")
-        
-        self.H = original_H.clone().to(self.dev)
-        self.rank_ratio = rank_ratio
-        return super().fasterquant(
-            blocksize=blocksize, percdamp=percdamp, groupsize=groupsize, actorder=actorder, static_groups=static_groups
-        )
-
-    def free(self):
-        self.H = None
-        self.H_val = None
-        self.Losses = None
-        self.Trace = None
-        torch.cuda.empty_cache()
-        utils.cleanup_memory(verbos=False)
-
-
-class GPTQ_sim(GPTQ):
-
-    def __init__(self, layer, alpha=1):
-        super().__init__(layer)
-        self.alpha = alpha
-
-    def fasterquant(
-        self, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False, quant=True
-    ):
-        W = self.layer.weight.data.clone()
-        W = W.float()
-
-        tick = time.time()
-
-        if not self.quantizer.ready():
-            self.quantizer.find_params(W)
-            
-        if not quant:
-            return
-
-        H = self.H
-        del self.H
-        
-        # original H (2XX^T) + H for the similarity term (8 XX^T W^TW XX^T)
-        # note that self.H = 2XX^T
-        H = H + 2 * self.alpha * H.matmul(W.t()).matmul(W).matmul(H)
-
-        dead = torch.diag(H) == 0
-        H[dead, dead] = 1
-        W[:, dead] = 0
-
-        if static_groups:
-            import copy
-            groups = []
-            for i in range(0, self.columns, groupsize):
-                quantizer = copy.deepcopy(self.quantizer)
-                quantizer.find_params(W[:, i:(i + groupsize)])
-                groups.append(quantizer)
-
-        if actorder:
-            perm = torch.argsort(torch.diag(H), descending=True)
-            W = W[:, perm]
-            H = H[perm][:, perm]
-            invperm = torch.argsort(perm)
-
-        Losses = torch.zeros_like(W)
-        Q = torch.zeros_like(W)
-
-        damp = percdamp * torch.mean(torch.diag(H))
-        diag = torch.arange(self.columns, device=self.dev)
-        H[diag, diag] += damp
-        H = torch.linalg.cholesky(H)
-        H = torch.cholesky_inverse(H)
-        H = torch.linalg.cholesky(H, upper=True)
-        Hinv = H
-
-        for i1 in range(0, self.columns, blocksize):
-            i2 = min(i1 + blocksize, self.columns)
-            count = i2 - i1
-
-            W1 = W[:, i1:i2].clone()
-            Q1 = torch.zeros_like(W1)
-            Err1 = torch.zeros_like(W1)
-            Losses1 = torch.zeros_like(W1)
-            Hinv1 = Hinv[i1:i2, i1:i2]
-
-            for i in range(count):
-                w = W1[:, i]
-                d = Hinv1[i, i]
-
-                if groupsize != -1:
-                    if not static_groups:
-                        if (i1 + i) % groupsize == 0:
-                            self.quantizer.find_params(W[:, (i1 + i):(i1 + i + groupsize)])
-                    else:
-                        idx = i1 + i
-                        if actorder:
-                            idx = perm[idx]
-                        self.quantizer = groups[idx // groupsize]
-
-                q = self.quantizer.forward(w.unsqueeze(1)).flatten()
-                Q1[:, i] = q
-                Losses1[:, i] = (w - q) ** 2 / d ** 2
-
-                err1 = (w - q) / d
-                W1[:, i:] -= err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
-                Err1[:, i] = err1
-
-            Q[:, i1:i2] = Q1
-            Losses[:, i1:i2] = Losses1 / 2
-
-            W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
-
-        torch.cuda.synchronize()
-
-        if actorder:
-            Q = Q[:, invperm]
-            
-        self.layer.weight.data = Q.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
-        if torch.any(torch.isnan(self.layer.weight.data)):
-            logging.warning('NaN in weights')
-            import pprint
-            pprint.pprint(self.quantizer.bits, self.quantizer.scale, self.quantizer.zero_point)
-            raise ValueError('NaN in weights')
-        
-
-
-class GPTQ_TP(GPTQ):
-
-    def __init__(self, layer):
-        super().__init__(layer)
-        self.cached_clean_input = None
-        self.cached_distorted_input = None
-        self.H_star = torch.zeros((self.columns, self.columns), device=self.dev)
-        self.nsamples_star = 0
-        
-    def set_clean_input(self, inp):
-        self.cached_clean_input = inp
-    
-    def set_distorted_input(self, inp):
-        self.cached_distorted_input = inp
-        
-    def add_batch_for_G(self):
-        
-        assert self.cached_clean_input != None and self.cached_distorted_input != None, "Inputs are not set"
-        
-        cached_clean_input = self.cached_clean_input
-        cached_distorted_input = self.cached_distorted_input
-        
-        if len(cached_clean_input.shape) == 2:
-            cached_clean_input = cached_clean_input.unsqueeze(0)
-        tmp = cached_clean_input.shape[0]
-        if len(cached_clean_input.shape) == 3:
-            cached_clean_input = cached_clean_input.reshape((-1, cached_clean_input.shape[-1]))
-        cached_clean_input = cached_clean_input.t()
-        
-        if len(cached_distorted_input.shape) == 2:
-            cached_distorted_input = cached_distorted_input.unsqueeze(0)
-        tmp = cached_distorted_input.shape[0]
-        if len(cached_distorted_input.shape) == 3:
-            cached_distorted_input = cached_distorted_input.reshape((-1, cached_distorted_input.shape[-1]))
-        cached_distorted_input = cached_distorted_input.t()
-        
-        self.H_star *= self.nsamples_star / (self.nsamples_star + tmp)
-        self.nsamples_star += tmp
-        # inp = inp.float()
-        cached_clean_input = math.sqrt(2 / self.nsamples_star) * cached_clean_input.float()
-        cached_distorted_input = math.sqrt(2 / self.nsamples_star) * cached_distorted_input.float()
-        
-        # We are computing H^{*} = (X^{*}X^T - X^{*} X^T)
-
-        # self.H += 2 / self.nsamples_G * inp.matmul(inp.t())
-        self.H_star += (cached_clean_input.matmul(cached_distorted_input.t()))
-        
-        del self.cached_clean_input 
-        del self.cached_distorted_input
-        self.cached_clean_input = None
-        self.cached_distorted_input = None
-        
-        self.using_G = True
-        
-    def add_batch_for_upper_bound(self):
-        
-        assert self.cached_clean_input != None and self.cached_distorted_input != None, "Inputs are not set"
-        
-        cached_clean_input = self.cached_clean_input
-        cached_distorted_input = self.cached_clean_input - self.cached_distorted_input
-        
-        if len(cached_clean_input.shape) == 2:
-            cached_clean_input = cached_clean_input.unsqueeze(0)
-        tmp = cached_clean_input.shape[0]
-        if len(cached_clean_input.shape) == 3:
-            cached_clean_input = cached_clean_input.reshape((-1, cached_clean_input.shape[-1]))
-        cached_clean_input = cached_clean_input.t()
-        
-        if len(cached_distorted_input.shape) == 2:
-            cached_distorted_input = cached_distorted_input.unsqueeze(0)
-        tmp = cached_distorted_input.shape[0]
-        if len(cached_distorted_input.shape) == 3:
-            cached_distorted_input = cached_distorted_input.reshape((-1, cached_distorted_input.shape[-1]))
-        cached_distorted_input = cached_distorted_input.t()
-        
-        self.H *= self.nsamples / (self.nsamples + tmp)
-        self.nsamples += tmp
-        # inp = inp.float()
-        cached_clean_input = math.sqrt(2 / self.nsamples) * cached_clean_input.float()
-        cached_distorted_input = math.sqrt(2 / self.nsamples) * cached_distorted_input.float()
-        
-        # We are computing H^{*} = (X^{*}X^T - X^{*} X^T)
-
-        # self.H += 2 / self.nsamples_G * inp.matmul(inp.t())
-        self.H += (cached_clean_input.matmul(cached_clean_input.t()) + cached_distorted_input.matmul(cached_distorted_input.t()))
-        
-        del self.cached_clean_input 
-        del self.cached_distorted_input
-        self.cached_clean_input = None
-        self.cached_distorted_input = None
-
-    def fasterquant(
-        self, blocksize=128, percdamp=.01, groupsize=-1, actorder=False, static_groups=False
-    ):
-        if not getattr(self, "using_G", False):
-            return super().fasterquant(
-                blocksize=blocksize, percdamp=percdamp, groupsize=groupsize, actorder=actorder, static_groups=static_groups
-            )
-        W = self.layer.weight.data.clone()
-        W = W.float()
-
-        tick = time.time()
-
-        if not self.quantizer.ready():
-            self.quantizer.find_params(W)
-
-        H = self.H
-        del self.H
-        dead = torch.diag(H) == 0
-        H[dead, dead] = 1
-        W[:, dead] = 0
-
-        if static_groups:
-            import copy
-            groups = []
-            for i in range(0, self.columns, groupsize):
-                quantizer = copy.deepcopy(self.quantizer)
-                quantizer.find_params(W[:, i:(i + groupsize)])
-                groups.append(quantizer)
-
-        if actorder:
-            perm = torch.argsort(torch.diag(H), descending=True)
-            W = W[:, perm]
-            H = H[perm][:, perm]
-            invperm = torch.argsort(perm)
-
-        Losses = torch.zeros_like(W)
-        Q = torch.zeros_like(W)
-
-        damp = percdamp * torch.mean(torch.diag(H))
-        diag = torch.arange(self.columns, device=self.dev)
-        H[diag, diag] += damp
-        H = torch.linalg.cholesky(H)
-        H = torch.cholesky_inverse(H)
-        H = torch.linalg.cholesky(H, upper=True)
-        Hinv = H
-        
-        # compute the G by G = (- 2 W^{*} H^{*}).t()
-        G = (- 2 * W.matmul(self.H_star)).t()
-        Hinv_G = - 0.5 * Hinv.matmul(G).t() # should have the same shape as the weight, TODO: check if it is correct to use the transpose
-        
-        del G # will not be used anymore
-        del self.H_star # will not be used anymore
-
-        for i1 in range(0, self.columns, blocksize):
-            i2 = min(i1 + blocksize, self.columns)
-            count = i2 - i1
-
-            W1 = W[:, i1:i2].clone()
-            Q1 = torch.zeros_like(W1)
-            dW = torch.zeros_like(W1)
-            Err1 = torch.zeros_like(W1)
-            Losses1 = torch.zeros_like(W1)
-            Hinv1 = Hinv[i1:i2, i1:i2]
-            Hinv_G1 = Hinv_G[:, i1:i2]
-
-            for i in range(count):
-                w = W1[:, i]
-                d = Hinv1[i, i]
-
-                if groupsize != -1:
-                    if not static_groups:
-                        if (i1 + i) % groupsize == 0:
-                            self.quantizer.find_params(W[:, (i1 + i):(i1 + i + groupsize)])
-                    else:
-                        idx = i1 + i
-                        if actorder:
-                            idx = perm[idx]
-                        self.quantizer = groups[idx // groupsize]
-
-                q = self.quantizer.forward(w.unsqueeze(1)).flatten()
-                Q1[:, i] = q
-                Losses1[:, i] = (w - q) ** 2 / d ** 2
-                
-                # check if Err.mal equal to adding dw together
-                
-                err1 = 0.5 * Hinv_G1[:, i] / d + (w - q) / d
-                dw = 0.5 * Hinv_G1[:, i:] + err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
-                
-                W1[:, i:] -= dw # err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
-                Err1[:, i] = err1
-
-            Q[:, i1:i2] = Q1
-            Losses[:, i1:i2] = Losses1 / 2
-
-            W[:, i2:] -= (0.5 * Hinv_G[:, i2:] + Err1.matmul(Hinv[i1:i2, i2:]))
-
-        torch.cuda.synchronize()
-
-        if actorder:
-            Q = Q[:, invperm]
-
-        self.layer.weight.data = Q.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
-        if torch.any(torch.isnan(self.layer.weight.data)):
-            logging.warning('NaN in weights')
-            import pprint
-            pprint.pprint(self.quantizer.bits, self.quantizer.scale, self.quantizer.zero_point)
-            raise ValueError('NaN in weights')
-
-
 def forward_cache_hessian(
         layer, 
         subset, 
@@ -1023,168 +258,43 @@ def forward_cache_hessian(
         attention_mask, 
         position_ids, 
         args,
-        clean_inps,
         dev,
-        scheduler,
-        module_input_weighting,
         batch_weighting,
-        module_feature_weighting,
-        module_sequence_weighting,
-        for_validation=False,
         dtype=torch.bfloat16,
     ):
     """
     Forward through the model and cache the Hessian in GPTQ object
     """
-    feature_weighting = None
-    if module_feature_weighting is not None:
-        feature_weighting = layer_wise_get_scores(
-            module_feature_weighting, 
-            subset, 
-            layer, 
-            inps, 
-            dev, 
-            attention_mask, 
-            position_ids, 
-            args, 
-            dtype=dtype,
-        )
-    
-    sequence_weighting = None
-    if module_sequence_weighting is not None:
-        sequence_weighting = global_get_score(
-            module_sequence_weighting, 
-            layer, 
-            inps, 
-            outs, 
-            dev,
-            method_type="sequence",
-        )
-
-    def add_batch(name, for_validation=False):
+    def add_batch(name):
         def tmp(_, inp, out):
             
             weighting = None
             if args.weighting_apply_module == "all" or any(n in name for n in args.weighting_apply_module.split("|")):
-                if scheduler is not None:
-                    weighting = scheduler.get_ratio(inp[0].shape[1])
-                elif module_input_weighting is not None and args.layerwise_weighting:
-                    # weighting = module_input_weighting.compute_weight(layer, inps[j].to(dev), outs[j].to(dev))
-                    weighting = module_input_weighting.compute_weight(layer, inp[0].data, out.data)
-                elif batch_weighting is not None:
+                if batch_weighting is not None:
                     weighting = batch_weighting[gptq[name].batch_index]
-            if for_validation:
-                gptq[name].add_batch_val(
-                    inp[0].data, 
-                    out.data, 
-                    weighting, 
-                    feature_weighting[name] if feature_weighting is not None else None,
-                    sequence_weighting[gptq[name].batch_index] if sequence_weighting is not None else None,
-                )
-            else:
-                # if args.weighting_apply_module != "all":
-                #     print(any(n in name for n in args.weighting_apply_module.split("|")))
-                #     if not any(n in name for n in args.weighting_apply_module.split("|")):
-                #         import pdb; pdb.set_trace()
-                gptq[name].add_batch(
-                    inp[0].data, 
-                    out.data, 
-                    weighting, 
-                    feature_weighting[name] if feature_weighting is not None else None,
-                    sequence_weighting[gptq[name].batch_index] if sequence_weighting is not None else None,
-                )
+
+            gptq[name].add_batch(
+                inp[0].data, 
+                out.data, 
+                weighting, 
+            )
 
             gptq[name].batch_index += 1 # using a very hacky way to get batch weighting
         return tmp
     
     handles = []
     for name in subset:
-        handles.append(subset[name].register_forward_hook(add_batch(name, for_validation)))
+        handles.append(subset[name].register_forward_hook(add_batch(name)))
 
-    split = "train" if not for_validation else "val"
+    split = "train"
     
     # compute the Hessian matrix
     for j in trange(len(inps), desc=f"calc {split} hessian and compute outputs before quantization", leave=False):
         # outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
         layer(inps[j].to(dev, dtype=dtype).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        
-    if args.add_clean_hessian:
-        for j in trange(len(inps), desc=f"calc {split} hessian for clean data", leave=False):
-            layer(clean_inps[j].to(dev, dtype=dtype).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-            
-    if args.add_mixed_hessian:
-        for j in trange(len(inps), desc=f"calc {split} hessian for mixed data", leave=False):
-            layer((0.5 * clean_inps[j] + 0.5 * inps[j]).to(dev, dtype=dtype).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
 
     for h in handles:
         h.remove()
-        
-    return gptq
-
-
-def forward_cache_hessian_two_passes(
-        layer, 
-        subset, 
-        gptq, 
-        inps, 
-        outs,
-        attention_mask, 
-        position_ids, 
-        args,
-        clean_inps,
-        dev,
-        scheduler,
-        module_input_weighting,
-        batch_weighting,
-        **kwargs,
-    ):
-    """
-    Forward through the model and cache the Hessian in GPTQ object
-    """
-    def cache_distorted_add_batch(name):
-        def tmp(_, inp, out):
-            gptq[name].set_distorted_input(inp[0].data)
-            gptq[name].add_batch(inp[0].data, out.data)
-            gptq[name].add_batch_for_G()
-            gptq[name].batch_index += 1
-        return tmp
-    
-    def cache_distorted_add_batch_upper_bound(name):
-        def tmp(_, inp, out):
-            gptq[name].set_distorted_input(inp[0].data)
-            gptq[name].add_batch_for_upper_bound()
-            gptq[name].batch_index += 1
-        return tmp
-    
-    def cache_clean(name):
-        def tmp(_, inp, out):
-            gptq[name].set_clean_input(inp[0].data)
-        return tmp
-    
-    if args.clean_corrupted_forward:
-        compute_func = cache_distorted_add_batch_upper_bound
-    else:
-        compute_func = cache_distorted_add_batch
-
-    # compute the Hessian matrix
-    for j in trange(len(inps), desc="calc hessian for two passes and compute outputs before quantization", leave=False):
-        handles = []
-        for name in subset:
-            handles.append(subset[name].register_forward_hook(cache_clean(name)))
-
-        layer(clean_inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-
-        for h in handles:
-            h.remove()
-            
-        handles = []
-        for name in subset:
-            handles.append(subset[name].register_forward_hook(compute_func(name)))
-
-        layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-
-        for h in handles:
-            h.remove()
         
     return gptq
 
@@ -1318,64 +428,6 @@ def get_inps(
     return inps, forward_args
 
 
-def layer_wise_get_scores(module_input_weighting, subset, layer, inps, dev, attention_mask, position_ids, args, dtype=torch.bfloat16):
-    
-    feature_weighting = {}
-    def add_batch(name):
-        def tmp(_, inp, out):
-            
-            weighting = None
-            if args.weighting_apply_module == "all" or any(n in name for n in args.weighting_apply_module.split("|")):
-                weighting = module_input_weighting.compute_weight(layer, inp[0].data, out.data)
-                
-            feature_weighting[name].append(weighting)
-
-        return tmp
-    
-    handles = []
-    for name in subset:
-        feature_weighting[name] = []
-        handles.append(subset[name].register_forward_hook(add_batch(name)))
-        
-    for j in trange(len(inps), desc=f"compute layer-wise scores", leave=False):
-        # outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        layer(inps[j].to(dev, dtype=dtype).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        
-    for h in handles:
-        h.remove()
-        
-    # take average of the feature weighting
-    # module_input_weighting.normalize_weight(torch.stack(feature_weighting[name]).norm(dim=0), module_input_weighting.min_value, module_input_weighting.max_value)
-    for name in feature_weighting:
-        if feature_weighting[name][0] is not None:
-            feature_weighting[name] = module_input_weighting.normalize_weight(
-                torch.stack(feature_weighting[name]).mean(dim=0), 
-                module_input_weighting.min_value, 
-                module_input_weighting.max_value
-            )
-        else:
-            feature_weighting[name] = None
-        
-    return feature_weighting
-
-def global_get_score(module_input_weighting, layer, inps, outs, dev, method_type="sequence"):
-    batch_weighting = []
-    for j in range(len(inps)):
-        batch_weighting.append(
-            module_input_weighting.compute_weight(layer, inps[j].to(dev), outs[j].to(dev))
-        )
-
-    if method_type == "sequence":
-        batch_weighting = module_input_weighting.normalize_weight(
-            torch.hstack(batch_weighting), 
-            module_input_weighting.min_value, 
-            module_input_weighting.max_value
-        )
-    else:
-        raise ValueError(f"{method_type} is not supported")
-    
-    return batch_weighting
-
 def get_token_frequency_for_each_data(dataloader) -> list:
     token_freq = defaultdict(int)
     token_freq_per_data = []
@@ -1402,43 +454,6 @@ def gptq_fwrd(model, dataloader, dev, args):
     
     use_cache = model.config.use_cache
     model.config.use_cache = False
-    # layers = model.model.layers
-
-    # model.model.embed_tokens = model.model.embed_tokens.to(dev)
-    # model.model.norm = model.model.norm.to(dev)
-    # layers[0] = layers[0].to(dev)
-
-    # dtype = next(iter(model.parameters())).dtype
-    # inps = torch.zeros(
-    #     (args.nsamples + args.val_size*args.expand_factor, args.train_seqlen, model.config.hidden_size), 
-    #     dtype=dtype, device=dev if not args.offload_activations else "cpu",
-    #     pin_memory=args.offload_activations
-    # )
-    # cache = {'i': 0, 'attention_mask': None}
-
-    # class Catcher(nn.Module):
-    #     def __init__(self, module):
-    #         super().__init__()
-    #         self.module = module
-    #     def forward(self, inp, **kwargs):
-    #         inps[cache['i']] = inp
-    #         cache['i'] += 1
-    #         cache['attention_mask'] = kwargs['attention_mask']
-    #         cache['position_ids'] = kwargs['position_ids']
-    #         raise ValueError
-    # layers[0] = Catcher(layers[0])
-    # for batch in dataloader:
-    #     try:
-    #         model(batch[0].to(dev))
-    #     except ValueError:
-    #         pass
-    # layers[0] = layers[0].module
-
-    # layers[0] = layers[0].cpu()
-    # model.model.embed_tokens = model.model.embed_tokens.cpu()
-    # model.model.norm = model.model.norm.cpu()
-    
-    # torch.cuda.empty_cache()
     
     inps, forward_args = get_inps(
         model,
@@ -1469,72 +484,17 @@ def gptq_fwrd(model, dataloader, dev, args):
                 ['mlp.down_proj.module']
             ]
     
-    scheduler = None
-    if args.scheduler_yaml is not None:
-        scheduler = schedulers.load_scheduler(
-            args.scheduler_yaml,
-            min_value=args.min_value,
-            max_value=args.max_value,
-            factor=args.factor,
-        )
-    
     module_input_weighting = None
     batch_weighting = None
-    module_feature_weighting = None
-    module_sequence_weighting = None
     
-    use_clean_pass = args.first_second_order or args.clean_corrupted_forward or args.clean_outs_for_mse or args.clean_outs_for_attn_loss
-
     indices = torch.randperm(inps.shape[0], device=inps.device)
     inps = inps[indices]
-    
-    # train_inps, train_outs = inps[args.val_size*args.expand_factor:], outs[args.val_size*args.expand_factor:]
-    # val_inps, val_outs = inps[:args.val_size*args.expand_factor], outs[:args.val_size*args.expand_factor]
 
-    if use_clean_pass:
-        clean_inps = inps.clone()
-        clean_outs = outs.clone()
-        
-        # clean_train_inps, clean_train_outs = clean_inps[args.val_size*args.expand_factor:], clean_outs[args.val_size*args.expand_factor:]
-        # clean_val_inps, clean_val_outs = clean_inps[:args.val_size*args.expand_factor], clean_outs[:args.val_size*args.expand_factor]
-    
     for i in range(len(layers)):
         logging.info(f'\nLayer {i}:')
-        # print(f'\nLayer {i}:', flush=True, end=' ')
         layer = layers[i].to(dev)
         full = quant_utils.find_qlayers(layer, layers=[torch.nn.Linear])
         original_dtype = next(layer.parameters()).dtype
-
-        org_attn_module = None
-        if args.compute_attn_loss:
-            org_attn_module = attn_module.CustomLLamaModel(
-                copy.deepcopy(layer.input_layernorm), 
-                copy.deepcopy(layer.self_attn),
-            )
-            
-        if args.compute_next_attn_loss and i < len(layers) - 1:
-            org_attn_module = attn_module.CustomLLamaModel(
-                copy.deepcopy(layers[i+1].to(dev).input_layernorm), 
-                copy.deepcopy(layers[i+1].to(dev).self_attn),
-            )
-        
-        # clean forward (computed before the layer is quantized)
-        # if args.clean_forward == "full":
-        # for j in trange(len(clean_inps), desc=f"calc clean outputs before quantization", leave=False):
-        #     outs_batch = layer(clean_inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        #     clean_outs[j].copy_(outs_batch.reshape_as(clean_outs[j]), non_blocking=True)
-        
-        # already cover both training and validation set
-        if use_clean_pass:
-            forward_and_store_outs(
-                layer, 
-                clean_inps, 
-                clean_outs, 
-                dev, 
-                attention_mask, 
-                position_ids,
-                "calc clean outputs before quantization",
-            )
         
         forward_and_store_outs(
             layer, 
@@ -1545,17 +505,8 @@ def gptq_fwrd(model, dataloader, dev, args):
             position_ids,
             "calc outputs before quantization",
         )
-        # elif args.clean_forward == "half":
-        #     for j in trange(len(inps), desc=f"calc {args.clean_forward} clean outputs before quantization", leave=False):
-        #         outs_batch = layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        #         clean_outs[j].copy_(outs_batch.reshape_as(clean_outs[j]), non_blocking=True)
 
-        # if args.pre_compute_act:
-        #     print("Pre compute activation")
-        #     for j in range(args.nsamples):
-        #         outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        
-        if (args.module_input_weighting_yaml is not None or args.custom_attn_type is not None) and not args.custom_attn_only_for_cache_output:
+        if args.module_input_weighting_yaml:
             # use cusotm attention to either compute special attentions or force to return attention weights
             attn_module.enable_llama_custom_attention(
                 layer, 
@@ -1565,12 +516,10 @@ def gptq_fwrd(model, dataloader, dev, args):
                 num_sink_token=args.num_sink_token,
             )
         
-        if args.module_input_weighting_yaml is not None:
             module_input_weighting = input_weighting_module.load_input_weighting_module(
                 args.model,
                 args.module_input_weighting_yaml,
                 method_type=args.adhoc_weighting_method_type,
-                half_none_zero_num=args.half_none_zero_num,
                 num_bins=args.num_bins,
                 min_value=args.min_value,
                 max_value=args.max_value,
@@ -1578,37 +527,13 @@ def gptq_fwrd(model, dataloader, dev, args):
                 reverse=args.reverse,
                 quantile_value=args.quantile_value,
                 truncate=args.truncate,
-                n_clusters=args.n_clusters,
             )
             
-            if not args.layerwise_weighting:
-                batch_weighting = []
-                for j in range(len(inps)):
-                    batch_weighting.append(
-                        module_input_weighting.compute_weight(layer, inps[j].to(dev), outs[j].to(dev), token_freq=token_freq_per_data[j].to(dev))
-                    )
-                    
-        if args.feature_weighting_yaml is not None:
-            module_feature_weighting = input_weighting_module.load_input_weighting_module(
-                args.model,
-                args.feature_weighting_yaml,
-                max_value=args.feature_max_value,
-                reverse=args.feature_reverse,
-            )
-            
-            # normalize later
-            module_feature_weighting.normalize = None
-            
-        if args.sequence_weighting_yaml is not None:
-            module_sequence_weighting = input_weighting_module.load_input_weighting_module(
-                args.model,
-                args.sequence_weighting_yaml,
-                max_value=args.sequence_max_value,
-                reverse=args.sequence_reverse,
-            )
-            
-            # normalize later
-            module_sequence_weighting.normalize = None
+            batch_weighting = []
+            for j in range(len(inps)):
+                batch_weighting.append(
+                    module_input_weighting.compute_weight(layer, inps[j].to(dev), outs[j].to(dev), token_freq=token_freq_per_data[j].to(dev))
+                )
 
         quantized_linears = {}
         
@@ -1627,17 +552,8 @@ def gptq_fwrd(model, dataloader, dev, args):
                 layer_weight_sym = not(args.w_asym)
                 
                 if i in args.layers_dont_quantize:
-                    if args.dont_quantize_qk:
-                        if 'q_proj' in name or 'k_proj' in name:
-                            layer_weight_bits = 16
-                            print(f"Skipping quanitize qk for layer {i}")
-                    elif args.dont_quantize_attn:
-                        if 'self_attn' in name:
-                            layer_weight_bits = 16
-                            print(f"Skipping quanitize self_attn for layer {i}")
-                    else:
-                        layer_weight_bits = 16
-                        print(f"Skipping quanitize for layer {i}")
+                    layer_weight_bits = 16
+                    print(f"Skipping quanitize for layer {i}")
 
                 if 'lm_head' in name:
                     layer_weight_bits = 16
@@ -1652,39 +568,10 @@ def gptq_fwrd(model, dataloader, dev, args):
                     )
                     gptq[name].quantizer = ldlq_utils.E8PWeightQuantizer()
                 else:
-                    if args.first_second_order or args.clean_corrupted_forward:
-                        gptq[name] = GPTQ_TP(subset[name])
-                    elif args.similarity_term:
-                        gptq[name] = GPTQ_sim(subset[name], alpha=args.alpha)
-                    elif args.adaptive_gptq and (args.low_rank_before or args.low_rank_after):
-                        gptq[name] = AdaptiveLowRankGPTQ(
-                            subset[name], 
-                            args.normalize_over_tokens,
-                            values_to_try=eval(args.values_to_try),
-                            train_in_val=args.train_in_val,
-                            low_rank_before=args.low_rank_before,
-                            low_rank_after=args.low_rank_after,
-                            rank_ratio=args.rank_ratio,
-                            rank_take_top=args.rank_take_top,
-                        )
-                    elif args.adaptive_gptq:
-                        gptq[name] = AdaptiveGPTQ(
-                            subset[name], 
-                            args.normalize_over_tokens,
-                            values_to_try=eval(args.values_to_try),
-                            train_in_val=args.train_in_val,
-                        )
-                    else:
-                        gptq[name] = GPTQ(
-                            subset[name], 
-                            args.normalize_over_tokens, 
-                            args.normalize_hessian,
-                            add_until_fail=args.add_until_fail,
-                            low_rank_before=args.low_rank_before,
-                            low_rank_after=args.low_rank_after,
-                            rank_ratio=args.rank_ratio,
-                            rank_take_top=args.rank_take_top,
-                        )
+                    gptq[name] = GPTQ(
+                        subset[name], 
+                        add_until_fail=args.add_until_fail,
+                    )
 
                     gptq[name].quantizer = quant_utils.WeightQuantizer()
 
@@ -1698,95 +585,38 @@ def gptq_fwrd(model, dataloader, dev, args):
 
                 gptq[name].batch_index = 0 # using a very hacky way to get batch weighting
                 
-            if args.first_second_order or args.clean_corrupted_forward:
-                cache_hessian_function = forward_cache_hessian_two_passes
-            else:
-                cache_hessian_function = forward_cache_hessian
-
             # compute train Hessian
-            gptq = cache_hessian_function(
+            gptq = forward_cache_hessian(
                 layer, 
                 subset, 
                 gptq, 
-                inps[args.val_size*args.expand_factor:], 
-                outs[args.val_size*args.expand_factor:],
+                inps, 
+                outs,
                 attention_mask, 
                 position_ids, 
                 args,
-                clean_inps[args.val_size*args.expand_factor:] if use_clean_pass else None,
                 dev,
-                scheduler,
-                module_input_weighting,
-                batch_weighting[args.val_size*args.expand_factor:] if batch_weighting else None,
-                module_feature_weighting,
-                module_sequence_weighting,
+                batch_weighting if batch_weighting else None,
                 dtype=original_dtype,
             )
-            
-            if args.adaptive_gptq:
-                # compute val Hessian
-                gptq = cache_hessian_function(
-                    layer, 
-                    subset, 
-                    gptq, 
-                    inps[:args.val_size*args.expand_factor], 
-                    outs[:args.val_size*args.expand_factor],
-                    attention_mask, 
-                    position_ids, 
-                    args,
-                    clean_inps[:args.val_size*args.expand_factor] if use_clean_pass else None,
-                    dev,
-                    scheduler,
-                    module_input_weighting,
-                    batch_weighting[:args.val_size*args.expand_factor] if batch_weighting else None,
-                    module_feature_weighting,
-                    for_validation=True,
-                )
 
             for name in subset:
                 # # use this to make sure all samples are processed for every module
                 # assert gptq[name].batch_index == args.nsamples
-                
-                if args.adhoc_multiplier:
-                    if name == "mlp.down_proj.module" and i == 1:
-                        torch.save(gptq[name].H, f"/nas-hdd/ylsung/gptq_hessian/mlp_down_seed{args.seed}.pth")
-                        exit()
-                        multiplier = 21
-                    else:
-                        multiplier = 1
-                    
-                    print(multiplier)
-                else:
-                    multiplier = 1
-                
+
                 layer_w_groupsize = args.w_groupsize
                 gptq[name].fasterquant(
-                    percdamp=args.percdamp * multiplier, groupsize=layer_w_groupsize, actorder=args.act_order, static_groups=False,
-                    quant=not args.no_gptq,
+                    percdamp=args.percdamp, groupsize=layer_w_groupsize, actorder=args.act_order, static_groups=False
                 )
                 quantizers['model.layers.%d.%s' % (i, name)] = gptq[name].quantizer
                 
                 # print(gptq[name].layer.weight.abs().mean().item())
                 
                 # add quantized linear for fine-tuning
-                quantized_linears[name] = gptq[name].get_quantize_linear(qat=args.qat)
+                quantized_linears[name] = gptq[name].get_quantize_linear()
                 
                 gptq[name].free()
-                
-        if (args.module_input_weighting_yaml is not None or args.custom_attn_type is not None) and args.custom_attn_only_for_cache_output:
-            attn_module.enable_llama_custom_attention(
-                layer, 
-                i,
-                custom_attn_type=args.custom_attn_type,
-                attn_length=args.attn_length,
-            )
-                
-        # if args.custom_attn_type is not None and not args.custom_attn_for_cache_output:
-        #     # the output computed using standard attention
-        #     attn_module.disable_llama_custom_attention(
-        #         layer, 
-        #     )
-        
+
         # change the standard layer to quantized layer
         for names in sequential:
             subset = {n: full[n] for n in names}
@@ -1795,45 +625,6 @@ def gptq_fwrd(model, dataloader, dev, args):
         
         del gptq
         torch.cuda.empty_cache()
-
-        if args.optimizer_yaml is not None:
-            optimizer = optimizers.load_optimizer(
-                args.optimizer_yaml, quant_lr=args.quant_lr, attn_loss_ratio=args.attn_loss_ratio
-                )
-            
-            quant_attn_module = None
-            if args.compute_attn_loss:
-                # create a new attn module so that the forward function can be modified
-                # but the weights are link to the quantized weights
-                self_attn = copy.deepcopy(layer.self_attn)
-                # link their weights
-                self_attn.q_proj = layer.self_attn.q_proj
-                self_attn.k_proj = layer.self_attn.k_proj
-                self_attn.v_proj = layer.self_attn.v_proj
-                self_attn.o_proj = layer.self_attn.o_proj
-
-                quant_attn_module = attn_module.CustomLLamaModel(
-                    layer.input_layernorm, 
-                    self_attn,
-                )
-
-            layer = optimizer.finetune(
-                layer,
-                dev,
-                args,
-                train_inps=inps[args.val_size*args.expand_factor:],
-                train_outs=outs[args.val_size*args.expand_factor:],
-                train_clean_inps=clean_inps[args.val_size*args.expand_factor:] if use_clean_pass else None,
-                train_clean_outs=clean_outs[args.val_size*args.expand_factor:] if use_clean_pass else None,
-                val_inps=inps[:args.val_size*args.expand_factor],
-                val_outs=outs[:args.val_size*args.expand_factor],
-                val_clean_inps=clean_inps[:args.val_size*args.expand_factor] if use_clean_pass else None,
-                val_clean_outs=clean_outs[:args.val_size*args.expand_factor] if use_clean_pass else None,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                org_attn_module=org_attn_module,
-                quant_attn_module=quant_attn_module,
-            )
 
         # print(layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0])
         # change back to standard layer
@@ -1853,18 +644,17 @@ def gptq_fwrd(model, dataloader, dev, args):
             assert wrapper.weight is wrapper.module.weight
             assert wrapper.bias is wrapper.module.bias
 
-        if not args.pre_compute_act:
-            forward_and_store_outs(
-                layer, 
-                inps, 
-                outs, 
-                dev,
-                attention_mask, 
-                position_ids,
-                "calc outs after quantization",
-            )
-        
-        if args.module_input_weighting_yaml is not None or args.custom_attn_type is not None:
+        forward_and_store_outs(
+            layer, 
+            inps, 
+            outs, 
+            dev,
+            attention_mask, 
+            position_ids,
+            "calc outs after quantization",
+        )
+    
+        if args.module_input_weighting_yaml:
             # the output computed using custom attention
             attn_module.disable_llama_custom_attention(
                 layer, 
@@ -1873,15 +663,8 @@ def gptq_fwrd(model, dataloader, dev, args):
         layers[i] = layer.cpu()
         del layer
         torch.cuda.empty_cache()
-        
-        # print(outs[0])
-        # print(clean_outs[0])
-        # print((outs[0] - clean_outs[0]).norm(dim=-1))
-        
+
         inps, outs = outs, inps
-        
-        if use_clean_pass:
-            clean_inps, clean_outs = clean_outs, clean_inps
         
     model.config.use_cache = use_cache
     utils.cleanup_memory(verbos=True)

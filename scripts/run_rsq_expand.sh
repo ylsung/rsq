@@ -25,7 +25,6 @@ source scripts/additional_short_eval.sh
 source scripts/env.sh
 
 # scaling_strategy can be attncon actdiff actnorm tokenfreq tokensim
-
 # min_value search over 0.1 0.05 0.02 0.01 0.005
 for min_value in 0.005
 do
@@ -33,7 +32,7 @@ do
     do
         for seed in 0 1 2
         do
-            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_min${min_value}@${seed}
+            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_min${min_value}_expand@${seed}
 
             job="eval cd ${CODEPATH}; \
             python fake_quant/main.py \
@@ -44,6 +43,8 @@ do
             --min_value ${min_value} \
             --max_value 1 \
             --add_until_fail \
+            --offload_activations \
+            --expand_factor 8 \
             --module_input_weighting_yaml fake_quant/configs/input_weighting/${scaling_strategy}.yaml \
             --nsamples ${nsamples} \
             --train_seqlen ${train_seqlen} \
@@ -65,7 +66,7 @@ do
     do
         for seed in 0 1 2
         do
-            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_min${min_value}@${seed}
+            save_name=${save_name_prefix}_${method_name}_${w_bits}bit_n${nsamples}_l${train_seqlen}_${scaling_strategy}_min${min_value}_expand@${seed}
             
             mapfile new_jobs < <(add_additional_jobs "${model_name}" "${save_name_prefix}" ${save_name} True)
 

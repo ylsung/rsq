@@ -18,7 +18,9 @@ model_name=meta-llama/Meta-Llama-3-8B-Instruct
 # model_name=Qwen/Qwen2.5-${model_size}B-Instruct
 
 # checkpoints want to be evaluated, just use the base of the checkpoint path, 
+# checkpoints want to be evaluated, just use the stem of the checkpoint path, 
 # exluding the parent folder because it is specify in CHECKPOINT_PATH
+# for example if the path of a checkpoint is .../.../AAA.pth, then use AAA here
 checkpoints_to_eval=(
     AAA
     BBB

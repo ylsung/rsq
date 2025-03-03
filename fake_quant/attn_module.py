@@ -462,8 +462,9 @@ def enable_llama_custom_attention(
     modified_module = layer.self_attn
     modified_module.layer_id = layer_id
     
-    # dense is the same as None, but just for input_weighting_module
-    assert custom_attn_type in [None, "dense", "block", "window", "topk", "sink", "ss"]
+    # None don't modify the attention but only for input_weighting_module to get the attention weight
+    # because default attn won't return attention weights
+    assert custom_attn_type in [None, "block", "window", "topk", "sink", "ss"]
     
     if custom_attn_type is not None:
         assert attn_length is not None

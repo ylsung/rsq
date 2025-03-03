@@ -1,7 +1,0 @@
-self_attn.k_proj.module: 5
-self_attn.v_proj.module: 5
-self_attn.q_proj.module: 5
-self_attn.o_proj.module: 5
-mlp.up_proj.module: 2
-mlp.gate_proj.module: 2
-mlp.down_proj.module: 2

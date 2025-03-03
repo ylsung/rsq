@@ -238,32 +238,6 @@ class AdhocMaskingWeighting(InputWeightingModule):
                 weighting[part*len_per_part:(part+1)*len_per_part] = 1
                 
         return weighting
-    
-
-class FirstLastLinearMaskingWeighting(InputWeightingModule):
-    def __init__(self, model_type, half_none_zero_num=512, **kwargs):
-        super().__init__(model_type)
-        self.half_none_zero_num = half_none_zero_num
-
-    def compute_weight(self, layer, input_tensor, output_tensor=None, **kwargs):
-        
-        if len(input_tensor.shape) == 2:
-            # add the batch diemnsion
-            input_tensor = input_tensor.unsqueeze(0)
-
-        weighting = torch.zeros(input_tensor.shape[1], device=input_tensor.device)
-        
-        half_none_zero_num = int(self.half_none_zero_num)
-        
-        weighting[:half_none_zero_num] = torch.linspace(
-            1, 0, half_none_zero_num+1, device=input_tensor.device
-        )[:half_none_zero_num]
-        
-        weighting[-half_none_zero_num:] = torch.linspace(
-            0, 1, half_none_zero_num+1, device=input_tensor.device
-        )[-half_none_zero_num:]
-
-        return weighting
 
         
 class MagnitudeWeighting(InputWeightingModule):
@@ -295,7 +269,7 @@ class MagnitudeWeighting(InputWeightingModule):
             weighting = output_tensor.float().norm(dim=self.dim)
             
         if self.reverse:
-            weighting = 1 / (weighting + 1e-8)
+            weighting = - weighting
 
         if self.scale == "square":
             weighting = weighting ** 2
@@ -606,7 +580,7 @@ class DotWeighting(InputWeightingModule):
             output_tensor = output_tensor.float()
             weighting = output_tensor.bmm(output_tensor.transpose(1, 2)).sum(dim=-1)
         if self.reverse:
-            weighting = 1 / (weighting + 1e-8)
+            weighting = - weighting
 
         if self.scale == "square":
             weighting = weighting ** 2

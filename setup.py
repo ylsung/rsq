@@ -42,6 +42,10 @@ def third_party_cmake():
     hadamard_dir = os.path.join(HERE, 'third-party/fast-hadamard-transform')
     pip = shutil.which('pip')
     retcode = subprocess.call([pip, 'install', '-e', hadamard_dir])
+    
+    # install quip sharp
+    hadamard_dir = os.path.join(HERE, 'third-party/quip-sharp/quiptools')
+    retcode = subprocess.call([pip, 'install', '-e', hadamard_dir])
 
 if __name__ == '__main__':
     third_party_cmake()

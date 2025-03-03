@@ -38,50 +38,10 @@ def main():
         model = model.eval()
         model.cuda()
     else:
-        # do the quantization
-        # Rotate the weights
-        # # # I would like to remove all the biases in all linear layers in a pytorch model
-        # for n, p in model.named_parameters():
-        #     # if ".bias" in n:
-        #     #     print(n)
-        #     if '.bias' in n and any (target in n for target in ['q_proj', 'k_proj']):
-        #         print(n)
-        #         p.data.zero_()
-        if args.only_fuse_layer_norms:
+        if args.rotate:
             rotation_utils.fuse_layer_norms(model)
-            quant_utils.add_actquant(model)
-        elif args.rotate or args.gptq_rotate:
-            # print("before fusing ln")
-            # text = "I like dogs, and you?"
-        
-            # tokenizer = transformers.AutoTokenizer.from_pretrained(model.config._name_or_path)
-            
-            # input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
-            
-            # pre_ln = model(input_ids)[0]
-            # print(pre_ln)
-            
-            if args.gptq_rotate:
-                # use used anymore
-                rotation_utils.rotate_model_gptq(model, trainloader, utils.DEV, args)
-
-            else:
-                rotation_utils.fuse_layer_norms(model)
-                
-                # text = "I like dogs, and you?"
-            
-                # tokenizer = transformers.AutoTokenizer.from_pretrained(model.config._name_or_path)
-                
-                # input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
-                # print("after fusing ln")
-                # after_ln = (model(input_ids)[0])
-                # print(after_ln)
-                
-                # print((pre_ln - after_ln).abs().max())
-                
-                rotation_utils.rotate_model(model, args)
+            rotation_utils.rotate_model(model, args)
             utils.cleanup_memory(verbos=True)
-                
             quant_utils.add_actquant(model) #Add Activation Wrapper to the model
             qlayers = quant_utils.find_qlayers(model)
             for name in qlayers:
@@ -102,7 +62,6 @@ def main():
                     else:
                         qlayers[name].had_dim = model.config.hidden_size//model.config.num_attention_heads
                     qlayers[name].fp32_had = args.fp32_had
-            
         else:
             quant_utils.add_actquant(model) #Add Activation Wrapper to the model as the rest of the code assumes it is present
             
@@ -121,7 +80,7 @@ def main():
                 
                 logging.info(f"quantize with {args.nsamples} of length {args.train_seqlen} {args.cal_dataset} samples")
                 trainloader = data_utils.get_loaders(
-                    args.cal_dataset, nsamples=args.nsamples + args.val_size,
+                    args.cal_dataset, nsamples=args.nsamples,
                     seed=args.seed, model=args.model,
                     seqlen=args.train_seqlen, eval_mode=False
                 )

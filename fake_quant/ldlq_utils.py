@@ -131,8 +131,6 @@ def block_LDL(H, b, check_nan=True, add_until_fail=True, percdamp=.01):
                 break
             except:
                 multiplier += 1
-                
-        print(multiplier)
     else:
         try:
             L = torch.linalg.cholesky(H)
@@ -368,7 +366,7 @@ class LDLQ():
             pprint.pprint(self.quantizer.bits, self.quantizer.scale, self.quantizer.zero_point)
             raise ValueError('NaN in weights')
         
-    def get_quantize_linear(self, qat=True):
+    def get_quantize_linear(self, qat=False):
         quantized_weight = self.quantizer.quantize(
             self.layer.weight.data,
             qat,

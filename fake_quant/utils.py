@@ -138,22 +138,10 @@ def parser_gen():
                         help='Percent of the average Hessian diagonal to use for dampening.')
     parser.add_argument('--act_order', action=argparse.BooleanOptionalAction, default=False,
                         help='act-order in GPTQ')
-    parser.add_argument('--pre_compute_act', action="store_true", default=False,
-                        help="whether to precompute the activation for quantization")
-    parser.add_argument('--clean_corrupted_forward', action="store_true", 
-                        help="whether to compute H from both clean and corrupted forward passes for quantization")
-    parser.add_argument('--first_second_order', action="store_true", 
-                        help="whether to compute H and G from two forward passes for quantization")
     parser.add_argument('--wbits_yaml', type=str, default=None, 
                         help="yaml file that specifies the wbit for each module")
     parser.add_argument('--layers_dont_quantize', nargs='+', 
                         help="layers don't quantize")
-    parser.add_argument('--dont_quantize_qk', action="store_true", 
-                        help="whether to not quantize the Q/K for the attention layers")
-    parser.add_argument('--dont_quantize_attn', action="store_true", 
-                        help="whether to not quanitze the attention layers")
-    parser.add_argument('--scheduler_yaml', type=str, default=None, 
-                        help="yaml file that specifies the scheduler to weigh inputs")
     parser.add_argument('--module_input_weighting_yaml', type=str, default=None, 
                         help="yaml file that specifies the module to weigh inputs for quantization")
     parser.add_argument('--num_bins', type=int, default=None)
@@ -162,62 +150,18 @@ def parser_gen():
     parser.add_argument('--masking', type=float, default=None)
     parser.add_argument('--truncate', type=float, default=None)
     parser.add_argument('--reverse', action="store_true", default=None)
-    parser.add_argument('--factor', type=float, default=None)
-    parser.add_argument('--gptq_rotate', action="store_true", default=False)
-    parser.add_argument('--only_fuse_layer_norms', action="store_true", default=False)
     
-    parser.add_argument('--feature_weighting_yaml', type=str, default=None)
-    parser.add_argument('--feature_max_value', type=float, default=None)
-    parser.add_argument('--feature_reverse', action="store_true", default=False)
-    
-    parser.add_argument('--sequence_weighting_yaml', type=str, default=None)
-    parser.add_argument('--sequence_max_value', type=float, default=None)
-    parser.add_argument('--sequence_reverse', action="store_true", default=False)
-    
-    parser.add_argument('--clean_outs_for_mse', action="store_true", default=False)
-    parser.add_argument('--compute_attn_loss', action="store_true", default=False)
-    parser.add_argument('--clean_outs_for_attn_loss', action="store_true", default=False)
-    parser.add_argument('--compute_self_similarity_loss', action="store_true", default=False)
-    parser.add_argument('--compute_next_attn_loss', action="store_true", default=False)
-    parser.add_argument('--attn_loss_on_prob', action="store_true", default=False)
-    parser.add_argument('--attn_loss_ratio', type=float, default=None)
-    parser.add_argument('--attn_loss_on_prob_sequential', action="store_true", default=False)
-    parser.add_argument('--optimizer_yaml', type=str, default=None, 
-                        help="yaml file that specifies the optimizer to finetune layers")
-    parser.add_argument('--val_size', type=int, default=128)
-    parser.add_argument('--qat', action="store_true", default=False)
-    parser.add_argument('--add_clean_hessian', action="store_true", default=False)
-    parser.add_argument('--add_mixed_hessian', action="store_true", default=False)
     parser.add_argument('--weighting_apply_module', type=str, default="all")
     parser.add_argument('--offload_activations', action="store_true", default=False)
-    parser.add_argument('--similarity_term', action="store_true", default=False)
-    parser.add_argument('--alpha', type=float, default=1.0)
-    parser.add_argument('--quant_lr', type=float, default=None, 
-                        help='Learning rate for quantization, if none, use the value in the config')
-    parser.add_argument('--no_gptq', action="store_true", default=False)
-    parser.add_argument('--normalize_over_tokens', action="store_true", default=False)
     parser.add_argument('--custom_attn_type', type=str, default=None)
     parser.add_argument('--attn_length', type=int, default=None)
     parser.add_argument('--num_sink_token', type=int, default=8)
-    parser.add_argument('--custom_attn_only_for_cache_output', action="store_true", default=False)
-    parser.add_argument('--adaptive_gptq', action="store_true", default=False)
-    parser.add_argument('--values_to_try', type=str, default="[0.001, 0.003, 0.01, 0.03, 0.1, 0.3]")
-    parser.add_argument('--normalize_hessian', action="store_true", default=False)
-    parser.add_argument('--train_in_val', action="store_true", default=False)
-    parser.add_argument('--adhoc_multiplier', action="store_true", default=False)
     parser.add_argument('--add_until_fail', action="store_true", default=False)
-    parser.add_argument('--low_rank_before', action="store_true", default=False)
-    parser.add_argument('--low_rank_after', action="store_true", default=False)
-    parser.add_argument('--rank_ratio', default=1.0, type=float)
-    parser.add_argument('--rank_take_top', action="store_true", default=False)
-    parser.add_argument('--layerwise_weighting', action="store_true", default=False)
     parser.add_argument('--quantile_value', type=float, default=None)
     parser.add_argument('--adhoc_weighting_method_type', type=str, default="masking_second")
-    parser.add_argument('--half_none_zero_num', type=int, default=None)
     parser.add_argument('--expand_factor', type=int, default=1)
     parser.add_argument('--e8p', action="store_true", default=False)
     parser.add_argument('--e8p_scale_override', type=float, default=0.9)
-    parser.add_argument('--n_clusters', type=int, default=100)
     
     # General Quantization Arguments
     parser.add_argument('--int8_down_proj', action=argparse.BooleanOptionalAction, default=False,
@@ -255,8 +199,6 @@ def parser_gen():
     parser.add_argument('--wandb', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--wandb_id', type=str, default=None)
     parser.add_argument('--wandb_project', type=str, default=None)
-
-
 
     #Experiments Arguments
     parser.add_argument('--save_name', type=str, default=None, help='The path to save experiment data, '
