@@ -37,7 +37,7 @@ conda install -c conda-forge libstdcxx-ng
 Or see [this](https://stackoverflow.com/questions/76974555/glibcxx-3-4-32-not-found-error-at-runtime-gcc-13-2-0) for other solutions.
 
 ## Environment Variables
-Set the environment variables (`CODEPATH`, `CHECKPOINT_PATH`) in `scripts/env.sh`. `CODEPATH` should be set as the directory of this repo. For example, set it to `XXX/rsq` if this repo's directory is XXX/rsq. Be sure to manually create the `CHECKPOINT_PATH` before using the scripts.
+Set the environment variables (`CODEPATH`, `CHECKPOINT_PATH`) in [`scripts/env.sh`](scripts/env.sh). `CODEPATH` should be set as the directory of this repo. For example, set it to `XXX/rsq` if this repo's directory is XXX/rsq. Be sure to manually create the `CHECKPOINT_PATH` before using the scripts.
 
 ## Dataset
 
@@ -79,9 +79,9 @@ Explanation and example to run the scripts
 [script] = scripts/run_16bit.sh # run 16-bit model
 [script] = scripts/run_gptq.sh # run GPTQ baseline
 [script] = scripts/run_quarot.sh # run GPTQ baseline
-[script] = scripts/run_rsq.sh # run RSQ without dataset expansion (faster and more efficient)
-[script] = scripts/run_rsq_expand.sh # run RSQ with dataset expansion
-[script] = scripts/run_rsq_heuristic.sh # run RSQ with heuristic approach
+[script] = scripts/run_rsq.sh # run RSQ without dataset expansion (faster and more memory efficient)
+[script] = scripts/run_rsq_expand.sh # run RSQ with dataset expansion (offload activations to cpu because of the expansion)
+[script] = scripts/run_rsq_heuristic.sh # run RSQ with heuristic approaches
 [script] = scripts/run_rsq_e8p.sh # run RSQ with e8p vector grid
 [script] = scripts/run_eval.sh # run short-context tasks evaluation
 [script] = scripts/run_long_eval.sh # run long-context tasks evaluation
@@ -89,8 +89,8 @@ Explanation and example to run the scripts
 
 **[Note]**
 * You can change the model from LLaMA to Mistral or Qwen inside the scripts.
-* You can change the scaling strategy in `run_rsq.sh` and `run_rsq_expand.sh`.
-* Update the actual checkpoint path in `run_eval.sh` and `run_long_eval.sh` while using them.
+* You can change the scaling strategy in [`run_rsq.sh`](scripts/run_rsq.sh) and [`run_rsq_expand.sh`](scripts/run_rsq_expand.sh).
+* Update the actual checkpoint path in [`run_eval.sh`](scripts/run_eval.sh) and [`run_long_eval.sh`](scripts/run_long_eval.sh) while using them.
 
 ## Citation 
 
