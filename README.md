@@ -67,14 +67,14 @@ bash scripts/job_allocater.sh -t [num_activated_gpus] -a [activated_gpu] [script
 
 Explanation and example to run the scripts
 ```bash
-[gpu_id] = 0 use the 0th GPU
-[gpu_id] = 2 use the 2nd GPU
+[gpu_id] = 0 # use the 0th GPU
+[gpu_id] = 2 # use the 2nd GPU
 
-[num_activated_gpus] = 3 the script will see GPU_ID from 0 - 2
-[num_activated_gpus] = 8 the script will see GPU_ID from 0 - 7
+[num_activated_gpus] = 3 # the script will see GPU_ID from 0 - 2
+[num_activated_gpus] = 8 # the script will see GPU_ID from 0 - 7
 
-[activated_gpu] = "0,1" use the 0th and 1st GPU
-[activated_gpu] = "2,7" use the 2nd and 7th GPU
+[activated_gpu] = "0,1" # use the 0th and 1st GPU
+[activated_gpu] = "2,7" # use the 2nd and 7th GPU
 
 [script] = scripts/run_16bit.sh # run 16-bit model
 [script] = scripts/run_gptq.sh # run GPTQ baseline
@@ -88,7 +88,7 @@ Explanation and example to run the scripts
 ```
 
 **[Note]**
-* You can change the model from LLaMA to Mistral or Qwen inside the scripts.
+* You can change the model from LLaMAg to Mistral or Qwen inside the scripts.
 * You can change the scaling strategy in [`run_rsq.sh`](scripts/run_rsq.sh) and [`run_rsq_expand.sh`](scripts/run_rsq_expand.sh).
 * Update the actual checkpoint path in [`run_eval.sh`](scripts/run_eval.sh) and [`run_long_eval.sh`](scripts/run_long_eval.sh) while using them.
 
