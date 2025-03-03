@@ -108,7 +108,7 @@ while [ $job_index -lt ${#jobs[@]} ]; do
   selected_gpu=${free_gpus[0]}
   gpu_locks[$selected_gpu]=1  # Lock this GPU
   echo "Starting job $job_index on GPU $selected_gpu: ${jobs[$job_index]}"
-  WANDB_API_KEY=${WANDB_API_KEY} CUDA_VISIBLE_DEVICES=$selected_gpu ${jobs[$job_index]} &
+  CUDA_VISIBLE_DEVICES=$selected_gpu ${jobs[$job_index]} &
   job_pid=$!
   job_pids[$job_pid]=$selected_gpu
   

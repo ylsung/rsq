@@ -96,7 +96,7 @@ Explanation and example to run the scripts
 
 Please cite our work if you found this repo helpful.
 
-```
+```bibtex
 @article{Sung2025RSQ,
   title={{RSQ}: Learning from Important Tokens Leads to Better Quantized LLMs},
   author={Yi-Lin Sung and and Prateek Yadav and Jialu Li and Jaehong Yoon and Mohit Bansal},
