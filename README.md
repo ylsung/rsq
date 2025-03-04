@@ -1,8 +1,9 @@
 
 # RSQ
-This repository contains the code for [**RSQ**: Learning from Important Tokens Leads to Better Quantized LLMs]().
+This repository contains the code for [**RSQ**: Learning from Important Tokens Leads to Better Quantized LLMs](https://arxiv.org/abs/2503.01820).
 
 * Authors: [Yi-Lin Sung](https://ylsung.github.io/), [Prateek Yadav](https://prateeky2806.github.io/), [Jialu Li](https://jialuli-luka.github.io/), [Jaehong Yoon](https://jaehong31.github.io/), [Mohit Bansal](https://www.cs.unc.edu/~mbansal/)
+* [Huggingface Space](https://huggingface.co/papers/2503.01820)
 
 
 ## Abstract
@@ -102,6 +103,6 @@ Please cite our work if you found this repo helpful.
   author={Yi-Lin Sung and and Prateek Yadav and Jialu Li and Jaehong Yoon and Mohit Bansal},
   journal={ArXiv},
   year={2025},
-  volume={},
+  volume={abs/2503.01820},
 }
 ```
