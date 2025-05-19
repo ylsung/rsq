@@ -45,12 +45,17 @@ def get_layers(model):
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
 
 
-def get_llama(model_name, hf_token):
+def get_llama(model_name, hf_token, use_flash_attn=False):
     torch.nn.init.kaiming_uniform_ = skip
     torch.nn.init.uniform_ = skip
     torch.nn.init.normal_ = skip
+    config = None
+    if use_flash_attn:
+        config = transformers.AutoConfig.from_pretrained(model_name)
+        config._attn_implementation = "flash_attention_2"
     model = transformers.LlamaForCausalLM.from_pretrained(model_name, torch_dtype='auto',
                                                           use_auth_token=hf_token,
+                                                          config=config,
                                                           low_cpu_mem_usage=True)
     # model.seqlen = 2048
     # logging.info('---> Loading {} Model with seq_len: {}'.format(model_name, model.seqlen))
@@ -58,12 +63,16 @@ def get_llama(model_name, hf_token):
     return model
 
 
-def get_opt(model_name):
+def get_opt(model_name, use_flash_attn=False):
     torch.nn.init.kaiming_uniform_ = skip
     torch.nn.init.uniform_ = skip
     torch.nn.init.normal_ = skip
+    config = None
+    if use_flash_attn:
+        config = transformers.AutoConfig.from_pretrained(model_name)
+        config._attn_implementation = "flash_attention_2"
     model = transformers.OPTForCausalLM.from_pretrained(model_name, torch_dtype='auto',
-                                                        low_cpu_mem_usage=True)
+                                                        low_cpu_mem_usage=True, config=config)
     model.seqlen = model.config.max_position_embeddings
     logging.info('---> Loading {} Model with seq_len: {}'.format(model_name, model.seqlen))
     return model
@@ -83,10 +92,10 @@ def get_gemma(model_name, hf_token):
 
 
 def get_model(
-    model_name, hf_token=None
+    model_name, hf_token=None, use_flash_attn=False,
 ):
     if 'llama' in model_name:
-        return get_llama(model_name, hf_token)
+        return get_llama(model_name, hf_token, use_flash_attn=use_flash_attn)
     elif 'opt' in model_name:
         return get_opt(model_name)
     else:
@@ -94,10 +103,15 @@ def get_model(
         torch.nn.init.uniform_ = skip
         torch.nn.init.normal_ = skip
         logging.info('---> Loading {} Model'.format(model_name))
+        config = None
+        if use_flash_attn:
+            config = transformers.AutoConfig.from_pretrained(model_name)
+            config._attn_implementation = "flash_attention_2"
         return transformers.AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_name,
             torch_dtype='auto',
             low_cpu_mem_usage=True,
+            config=config,
         )
 
 

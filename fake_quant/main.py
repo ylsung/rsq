@@ -10,6 +10,7 @@ import eval_utils
 import hadamard_utils
 import logging
 import os
+import time
 
 from api import load_quantized_checkpoint
 
@@ -25,7 +26,7 @@ def main():
     utils.config_logging(os.path.join(args.save_path, f'{args.save_name}.log'))
     
     transformers.set_seed(args.seed)
-    model = model_utils.get_model(args.model, args.hf_token)
+    model = model_utils.get_model(args.model, args.hf_token, args.use_flash_attn)
     model.eval()
 
     if args.load_qmodel_path:
@@ -36,7 +37,7 @@ def main():
         )
         
         model = model.eval()
-        model.cuda()
+        # model.cuda()
     else:
         if args.rotate:
             rotation_utils.fuse_layer_norms(model)
@@ -64,7 +65,8 @@ def main():
                     qlayers[name].fp32_had = args.fp32_had
         else:
             quant_utils.add_actquant(model) #Add Activation Wrapper to the model as the rest of the code assumes it is present
-            
+        
+        quantization_time_start = time.time()
         save_dict = {}
         if args.w_bits < 16:
             if args.load_qmodel_path: # Load Quantized Rotated Model
@@ -97,6 +99,10 @@ def main():
         if args.save_qmodel_path:
             save_dict["model"] = model.state_dict()
             torch.save(save_dict, args.save_qmodel_path)
+        
+        torch.cuda.synchronize()
+        logging.info(f"quantization time: {time.time() - quantization_time_start}")
+        
 
     # Add Input Quantization
     if args.a_bits < 16 or args.v_bits < 16:
@@ -157,8 +163,9 @@ def main():
         )
 
     
-    dataset_ppl = eval_utils.evaluator(model, testloader, utils.DEV, args)
-    if args.wandb:
+    if not args.skip_wiki_eval:
+        dataset_ppl = eval_utils.evaluator(model, testloader, utils.DEV, args)
+        if args.wandb:
             wandb.log({'ppl/{}'.format(args.eval_dataset.upper()): dataset_ppl})
 
     if not args.lm_eval:
@@ -170,16 +177,18 @@ def main():
         from lm_eval.api.registry import ALL_TASKS
         from lm_eval.models.huggingface import HFLM
 
-        
-    
     if args.distribute:
         utils.distribute_model(model)
     else:
         model.to(utils.DEV)
     
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model, use_fast=False, use_auth_token=args.hf_token)
-    hflm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.lm_eval_batch_size)
-
+    hflm = HFLM(
+        pretrained=model, tokenizer=tokenizer, batch_size=args.lm_eval_batch_size,
+        max_length=args.lm_eval_max_length,
+        # device=args.lm_eval_device
+        )
+    
     utils.cleanup_memory(verbos=True)
     
     # task_names = lm_eval_utils.pattern_match(args.tasks, ALL_TASKS)
@@ -192,7 +201,9 @@ def main():
         apply_chat_template=args.apply_chat_template,
         fewshot_as_multiturn=args.fewshot_as_multiturn,
         limit=args.limit, # for testing
-    )['results']
+    )
+
+    results = results['results']
     
     def get_number(result):
         

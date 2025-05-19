@@ -176,7 +176,7 @@ class OriginalAttentionWeighting(InputWeightingModule):
             # attn_weights = llama_original_attention(attn_module, input_tensor)
             attn_weights = attn_module(input_tensor, position_ids=position_ids, output_attentions=True)[1]
             
-        weighting = attn_weights.sum(dim=1) # sum over heads
+        weighting = attn_weights.float().sum(dim=1) # sum over heads
         weighting = weighting.sum(dim=1) # sum over tokens
         
         weighting = weighting.float()

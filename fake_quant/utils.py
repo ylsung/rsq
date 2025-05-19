@@ -18,6 +18,7 @@ supported_models = [
             'meta-llama/Meta-Llama-3-8B',
             'meta-llama/Meta-Llama-3-8B-Instruct',
             'meta-llama/Meta-Llama-3-70B',
+            'meta-llama/Meta-Llama-3-70B-Instruct',
             'google/gemma-2-9b-it',
             'google/gemma-2-27b-it',
             'Qwen/Qwen2.5-7B-Instruct',
@@ -163,6 +164,9 @@ def parser_gen():
     parser.add_argument('--e8p', action="store_true", default=False)
     parser.add_argument('--e8p_scale_override', type=float, default=0.9)
     
+    parser.add_argument('--nf', action="store_true", help="Whether to use NormalFloat in weight quantizer")
+    parser.add_argument('--activation_folder', type=str, default=None)
+    
     # General Quantization Arguments
     parser.add_argument('--int8_down_proj', action=argparse.BooleanOptionalAction, default=False,
                         help='Use INT8 for Down Projection! If this set, both weights and activations of this layer will be in INT8')
@@ -227,6 +231,11 @@ def parser_gen():
         default=False,
     )
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of examples to evaluate on.')
+    parser.add_argument('--lm_eval_max_length', type=int, default=None, help="Limit the max length of generation")
+    parser.add_argument('--lm_eval_device', type=str, default="auto")
+    parser.add_argument('--skip_wiki_eval', action="store_true")
+    parser.add_argument('--use_flash_attn', action="store_true")
+    parser.add_argument('--debug', action="store_true")
     parser.add_argument(
         "--distribute",
         action="store_true",

@@ -532,8 +532,11 @@ def gptq_fwrd(model, dataloader, dev, args):
             batch_weighting = []
             for j in range(len(inps)):
                 batch_weighting.append(
-                    module_input_weighting.compute_weight(layer, inps[j].to(dev), outs[j].to(dev), token_freq=token_freq_per_data[j].to(dev))
+                    module_input_weighting.compute_weight(layer, inps[j].to(dev), outs[j].to(dev), token_freq=token_freq_per_data[j].to(dev), args=args)
                 )
+
+            # if args.debug:
+                # import pdb; pdb.set_trace()
 
         quantized_linears = {}
         
@@ -581,6 +584,7 @@ def gptq_fwrd(model, dataloader, dev, args):
                     sym=layer_weight_sym, 
                     mse=args.w_clip, 
                     scale_override=args.e8p_scale_override,
+                    nf=args.nf,
                 )
 
                 gptq[name].batch_index = 0 # using a very hacky way to get batch weighting
@@ -615,8 +619,13 @@ def gptq_fwrd(model, dataloader, dev, args):
                 # add quantized linear for fine-tuning
                 quantized_linears[name] = gptq[name].get_quantize_linear()
                 
+                # make sure the quantized linear generating the same weight as the quantized weight
+                assert torch.all(
+                    quantized_linears[name].quantized_weight() == eval(f"layer.{name}.weight.data")
+                )
+                
                 gptq[name].free()
-
+                
         # change the standard layer to quantized layer
         for names in sequential:
             subset = {n: full[n] for n in names}

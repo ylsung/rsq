@@ -5,6 +5,7 @@ import torch.nn as nn
 import utils
 import hadamard_utils
 import fast_hadamard_transform
+from nf_utils import nf_quant_dequant, create_normal_float_scheme, NFQuantizedWeights
 
 
 def round_ste(x: torch.Tensor):
@@ -337,7 +338,7 @@ class WeightQuantizer(torch.nn.Module):
     def configure(
         self,
         bits, perchannel=False, sym=True,
-        mse=False, norm=2.4, grid=100, maxshrink=.8, **kwargs,
+        mse=False, norm=2.4, grid=100, maxshrink=.8, nf=False, **kwargs,
     ):
         self.bits = bits
         self.perchannel = perchannel
@@ -346,7 +347,13 @@ class WeightQuantizer(torch.nn.Module):
         self.norm = norm
         self.grid = grid
         self.maxshrink = maxshrink
-        if sym:
+        self.nf = nf
+
+        if nf:
+            self.qscheme = create_normal_float_scheme(bits, "cpu")
+            self.grid_max = max(abs(self.qscheme.values[0]), self.qscheme.values[-1])
+            self.maxq = torch.tensor(2**(bits-1)-1) # not used
+        elif sym:
             self.maxq = torch.tensor(2**(bits-1)-1)
         else:
             self.maxq = torch.tensor(2**bits - 1)
@@ -367,7 +374,12 @@ class WeightQuantizer(torch.nn.Module):
         xmin = torch.minimum(x.min(1)[0], tmp)
         xmax = torch.maximum(x.max(1)[0], tmp)
 
-        if self.sym:
+        if self.nf:
+            xmax = torch.maximum(torch.abs(xmin), xmax).clamp(min=1e-5)
+            # print(abs(scheme.values[0]), scheme.values[-1])
+            self.scale = xmax / self.grid_max.to(dev)
+            self.zero = torch.zeros_like(self.scale)
+        elif self.sym:
             xmax = torch.maximum(torch.abs(xmin), xmax).clamp(min=1e-5)
             self.scale = xmax / self.maxq
             self.zero = torch.zeros_like(self.scale)
@@ -385,12 +397,15 @@ class WeightQuantizer(torch.nn.Module):
                 xmin1 = p * xmin
                 xmax1 = p * xmax
 
-                if self.sym:
+                if self.nf:
+                    scale1 = xmax1 / self.grid_max.to(dev)
+                    zero1 = torch.zeros_like(scale1)
+                    q = nf_quant_dequant(x, self.qscheme, scale1.unsqueeze(1))
+                elif self.sym:
                     scale1 = xmax1 / self.maxq
                     zero1 = torch.zeros_like(scale1)
                     q = sym_quant_dequant(x, scale1.unsqueeze(1), self.maxq)
                 else:
-
                     scale1 = (xmax1 - xmin1) / self.maxq
                     zero1 = torch.round(-xmin1 / scale1)
                     q = asym_quant_dequant(x, scale1.unsqueeze(1), zero1.unsqueeze(1), self.maxq)
@@ -419,7 +434,9 @@ class WeightQuantizer(torch.nn.Module):
     def forward(self, x):
         x_dtype = x.dtype
         if self.ready() and self.bits < 16:
-            if self.sym:
+            if self.nf:
+                return nf_quant_dequant(x, self.qscheme, self.scale).to(x_dtype)
+            elif self.sym:
                 return sym_quant_dequant(x, self.scale, self.maxq).to(x_dtype)
             return asym_quant_dequant(x, self.scale, self.zero, self.maxq).to(x_dtype)
         return x
@@ -431,7 +448,10 @@ class WeightQuantizer(torch.nn.Module):
         weight_class = QATQuantizedWeights if qat else QuantizedWeights
 
         if self.ready() and self.bits < 16:
-            if self.sym:
+            if self.nf:
+                assert not qat, "QAT for NF weight is not implemented"
+                return NFQuantizedWeights(x, self.qscheme, self.scale, dtype=x_dtype)
+            elif self.sym:
                 return weight_class(x, self.scale, maxq=self.maxq, dtype=x_dtype)
             
             return weight_class(x, self.scale, self.zero, maxq=self.maxq, dtype=x_dtype)
