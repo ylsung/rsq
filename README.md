@@ -40,6 +40,8 @@ Or see [this](https://stackoverflow.com/questions/76974555/glibcxx-3-4-32-not-fo
 ## Environment Variables
 Set the environment variables (`CODEPATH`, `CHECKPOINT_PATH`) in [`scripts/env.sh`](scripts/env.sh). `CODEPATH` should be set as the directory of this repo. For example, set it to `XXX/rsq` if this repo's directory is XXX/rsq. Be sure to manually create the `CHECKPOINT_PATH` before using the scripts.
 
+Also, remember to log into your account via huggingface-cli.
+
 ## Dataset
 
 ### Short-context Tasks
@@ -86,6 +88,7 @@ Explanation and example to run the scripts
 [script] = scripts/run_rsq_e8p.sh # run RSQ with e8p vector grid
 [script] = scripts/run_eval.sh # run short-context tasks evaluation
 [script] = scripts/run_long_eval.sh # run long-context tasks evaluation
+[script] = scripts/run_rsq_w4a4kv4.sh or scripts/run_quarot_w4a4kv4.sh # run joint (weight + activation + kvcache) quantization
 ```
 
 **[Note]**
