@@ -585,6 +585,7 @@ def gptq_fwrd(model, dataloader, dev, args):
                     mse=args.w_clip, 
                     scale_override=args.e8p_scale_override,
                     nf=args.nf,
+                    w_quant_scheme=args.w_quant_scheme,
                 )
 
                 gptq[name].batch_index = 0 # using a very hacky way to get batch weighting
@@ -709,7 +710,8 @@ def rtn_fwrd(model, dev, args):
 
             quantizer = quant_utils.WeightQuantizer()
             quantizer.configure(
-                layer_weight_bits, perchannel=True, sym=not(args.w_asym), mse=args.w_clip
+                layer_weight_bits, perchannel=True, sym=not(args.w_asym), mse=args.w_clip,
+                w_quant_scheme=args.w_quant_scheme,
             )
             W = subset[name].weight.data
             quantizer.find_params(W)

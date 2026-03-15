@@ -21,7 +21,7 @@ def clamp_ste(x: torch.Tensor, min, max):
 
 
 class QATQuantizedWeights(torch.nn.Module):
-    def __init__(self, weight, scale, zero=None, maxq=None, dtype=torch.float32):
+    def __init__(self, weight, scale, zero=None, maxq=None, dtype=torch.float32, bits=None):
         super().__init__()
         self.out_features, self.in_features = weight.shape
         self.register_buffer("maxq", maxq)
@@ -44,26 +44,109 @@ class QATQuantizedWeights(torch.nn.Module):
 
 
 class QuantizedWeights(torch.nn.Module):
-    def __init__(self, weight, scale, zero=None, maxq=None, dtype=torch.float32):
+    def __init__(self, weight, scale, zero=None, maxq=None, dtype=torch.float32, bits=None):
         super().__init__()
         self.out_features, self.in_features = weight.shape
-        
+        self.bits = bits
         self.zero = None
         self.dtype = dtype
         if zero is not None:
             weight_q, scale, zero = asym_quant(weight, scale, zero, maxq)
             self.zero = nn.Parameter(zero)
+            codes = weight_q.to(torch.int32)
+            signed = False
+            quant_scheme = "asym"
         else:
             weight_q, scale = sym_quant(weight, scale, maxq)
-            
+            codes = quantized_to_codes(weight_q.to(torch.int32), bits, quant_scheme="sym")
+            signed = True
+            quant_scheme = "sym"
+
         self.scale = nn.Parameter(scale)
-            
-        self.register_buffer("weight_q", weight_q)
+        packed_q, packed_shape = pack_codes_to_int32(codes, bits)
+        self.register_buffer("packed_weight_q", packed_q)
+        self.register_buffer("packed_shape", torch.tensor(weight.shape, dtype=torch.int32))
+        self.register_buffer("packed_words_shape", torch.tensor(packed_shape, dtype=torch.int32))
+        self.packed_signed = signed
+        self.packed_quant_scheme = quant_scheme
 
     def forward(self):
+        weight_q = self.unpack_weight_q().to(self.scale.dtype)
         if self.zero is not None:
-            return asym_dequant(self.weight_q, self.scale, self.zero).to(self.dtype)
-        return sym_dequant(self.weight_q, self.scale).to(self.dtype)
+            return asym_dequant(weight_q, self.scale, self.zero).to(self.dtype)
+        return sym_dequant(weight_q, self.scale).to(self.dtype)
+
+    def unpack_weight_q(self):
+        packed_shape = tuple(int(x) for x in self.packed_words_shape.tolist())
+        orig_shape = tuple(int(x) for x in self.packed_shape.tolist())
+        codes = unpack_codes_from_int32(self.packed_weight_q, self.bits, packed_shape, orig_shape)
+        if self.packed_quant_scheme == "asym":
+            return codes.to(torch.int32)
+        return codes_to_quantized(codes, self.bits, self.packed_quant_scheme)
+
+    def packed_storage_size_bytes(self):
+        total = self.packed_weight_q.nelement() * self.packed_weight_q.element_size()
+        total += self.scale.nelement() * self.scale.element_size()
+        if self.zero is not None:
+            total += self.zero.nelement() * self.zero.element_size()
+        return total
+
+
+class CodebookQATQuantizedWeights(torch.nn.Module):
+    def __init__(self, weight, scale, quant_scheme, dtype=torch.float32):
+        super().__init__()
+        self.out_features, self.in_features = weight.shape
+        self.weight_fp = nn.Parameter(weight)
+        self.scale = nn.Parameter(scale)
+        self.quant_scheme = quant_scheme
+        self.dtype = dtype
+
+    def forward(self):
+        scale = self.scale.to(self.weight_fp.device)
+        if self.quant_scheme == "ternary":
+            q = clamp_ste(round_ste(self.weight_fp / scale), -1, 1)
+        elif self.quant_scheme == "binary":
+            q = torch.where(self.weight_fp >= 0, torch.ones_like(self.weight_fp), -torch.ones_like(self.weight_fp))
+        else:
+            raise ValueError(f"Unsupported codebook quantization scheme: {self.quant_scheme}")
+        return (scale * q).to(self.dtype)
+
+
+class CodebookQuantizedWeights(torch.nn.Module):
+    def __init__(self, weight, scale, quant_scheme, dtype=torch.float32, bits=None):
+        super().__init__()
+        self.out_features, self.in_features = weight.shape
+        self.scale = nn.Parameter(scale)
+        self.quant_scheme = quant_scheme
+        self.dtype = dtype
+        self.bits = bits
+
+        if quant_scheme == "ternary":
+            weight_q = torch.clamp(torch.round(weight / scale), -1, 1)
+        elif quant_scheme == "binary":
+            weight_q = torch.where(weight >= 0, torch.ones_like(weight), -torch.ones_like(weight))
+        else:
+            raise ValueError(f"Unsupported codebook quantization scheme: {quant_scheme}")
+
+        codes = quantized_to_codes(weight_q.to(torch.int32), self.bits, quant_scheme=self.quant_scheme)
+        packed_q, packed_shape = pack_codes_to_int32(codes, self.bits)
+        self.register_buffer("packed_weight_q", packed_q)
+        self.register_buffer("packed_shape", torch.tensor(weight.shape, dtype=torch.int32))
+        self.register_buffer("packed_words_shape", torch.tensor(packed_shape, dtype=torch.int32))
+
+    def forward(self):
+        return (self.scale * self.unpack_weight_q().to(self.scale.dtype)).to(self.dtype)
+
+    def unpack_weight_q(self):
+        packed_shape = tuple(int(x) for x in self.packed_words_shape.tolist())
+        orig_shape = tuple(int(x) for x in self.packed_shape.tolist())
+        codes = unpack_codes_from_int32(self.packed_weight_q, self.bits, packed_shape, orig_shape)
+        return codes_to_quantized(codes, self.bits, self.quant_scheme)
+
+    def packed_storage_size_bytes(self):
+        total = self.packed_weight_q.nelement() * self.packed_weight_q.element_size()
+        total += self.scale.nelement() * self.scale.element_size()
+        return total
 
 
 def get_minq_maxq(bits, sym):
@@ -104,6 +187,66 @@ def sym_dequant(q, scale):
 
 def sym_quant_dequant(x, scale, maxq):
     return sym_dequant(*sym_quant(x, scale, maxq))
+
+
+def quantized_to_codes(q, bits, quant_scheme):
+    q = q.to(torch.int32)
+    if quant_scheme == "sym":
+        return two_compl(q, bits).to(torch.int32)
+    if quant_scheme == "asym":
+        return q
+    if quant_scheme == "binary":
+        return torch.where(q > 0, torch.ones_like(q), torch.zeros_like(q))
+    if quant_scheme == "ternary":
+        return q + 1
+    raise ValueError(f"Unsupported quantization scheme: {quant_scheme}")
+
+
+def codes_to_quantized(codes, bits, quant_scheme):
+    codes = codes.to(torch.int32)
+    if quant_scheme == "sym":
+        sign_bit = 1 << (bits - 1)
+        full_range = 1 << bits
+        return torch.where(codes >= sign_bit, codes - full_range, codes)
+    if quant_scheme == "asym":
+        return codes
+    if quant_scheme == "binary":
+        return torch.where(codes > 0, torch.ones_like(codes), -torch.ones_like(codes))
+    if quant_scheme == "ternary":
+        return codes - 1
+    raise ValueError(f"Unsupported quantization scheme: {quant_scheme}")
+
+
+def pack_codes_to_int32(codes, bits):
+    assert bits > 0 and bits <= 8, f"Unsupported bit width for packing: {bits}"
+    flat = codes.to(torch.int32).flatten()
+    values_per_word = 32 // bits
+    total_words = (flat.numel() + values_per_word - 1) // values_per_word
+    padded = torch.zeros(total_words * values_per_word, dtype=torch.int32, device=flat.device)
+    padded[:flat.numel()] = flat
+    reshaped = padded.view(total_words, values_per_word)
+
+    packed = torch.zeros(total_words, dtype=torch.int32, device=flat.device)
+    mask = (1 << bits) - 1
+    for idx in range(values_per_word):
+        packed |= (reshaped[:, idx] & mask) << (idx * bits)
+
+    return packed, (total_words,)
+
+
+def unpack_codes_from_int32(packed, bits, packed_shape, original_shape):
+    assert bits > 0 and bits <= 8, f"Unsupported bit width for packing: {bits}"
+    values_per_word = 32 // bits
+    mask = (1 << bits) - 1
+    flat_packed = packed.view(-1).to(torch.int32)
+    codes = torch.zeros(flat_packed.numel() * values_per_word, dtype=torch.int32, device=packed.device)
+    for idx in range(values_per_word):
+        codes[idx::values_per_word] = (flat_packed >> (idx * bits)) & mask
+
+    numel = 1
+    for dim in original_shape:
+        numel *= dim
+    return codes[:numel].view(original_shape)
 
 
 def two_compl(x, bits: int):
@@ -334,11 +477,12 @@ class WeightQuantizer(torch.nn.Module):
         self.register_buffer('maxq', torch.tensor(0))
         self.register_buffer('scale', torch.zeros(shape))
         self.register_buffer('zero', torch.zeros(shape))
+        self.w_quant_scheme = 'sym'
 
     def configure(
         self,
         bits, perchannel=False, sym=True,
-        mse=False, norm=2.4, grid=100, maxshrink=.8, nf=False, **kwargs,
+        mse=False, norm=2.4, grid=100, maxshrink=.8, nf=False, w_quant_scheme='sym', **kwargs,
     ):
         self.bits = bits
         self.perchannel = perchannel
@@ -348,8 +492,11 @@ class WeightQuantizer(torch.nn.Module):
         self.grid = grid
         self.maxshrink = maxshrink
         self.nf = nf
+        self.w_quant_scheme = w_quant_scheme
 
-        if nf:
+        if self.w_quant_scheme in ('ternary', 'binary'):
+            self.maxq = torch.tensor(1)
+        elif nf:
             self.qscheme = create_normal_float_scheme(bits, "cpu")
             self.grid_max = max(abs(self.qscheme.values[0]), self.qscheme.values[-1])
             self.maxq = torch.tensor(2**(bits-1)-1) # not used
@@ -369,6 +516,20 @@ class WeightQuantizer(torch.nn.Module):
             x = x.flatten(1)
         else:
             x = x.flatten().unsqueeze(0)
+
+        if self.w_quant_scheme in ('ternary', 'binary'):
+            self.scale = x.abs().mean(1).clamp(min=1e-5)
+            self.zero = torch.zeros_like(self.scale)
+
+            if not self.perchannel:
+                tmp = shape[0]
+                self.scale = self.scale.repeat(tmp)
+                self.zero = self.zero.repeat(tmp)
+
+            shape = [-1] + [1] * (len(shape) - 1)
+            self.scale = self.scale.reshape(shape)
+            self.zero = self.zero.reshape(shape)
+            return
 
         tmp = torch.zeros(x.shape[0], device=dev)
         xmin = torch.minimum(x.min(1)[0], tmp)
@@ -434,7 +595,12 @@ class WeightQuantizer(torch.nn.Module):
     def forward(self, x):
         x_dtype = x.dtype
         if self.ready() and self.bits < 16:
-            if self.nf:
+            if self.w_quant_scheme == 'ternary':
+                return (self.scale * torch.clamp(torch.round(x / self.scale), -1, 1)).to(x_dtype)
+            elif self.w_quant_scheme == 'binary':
+                q = torch.where(x >= 0, torch.ones_like(x), -torch.ones_like(x))
+                return (self.scale * q).to(x_dtype)
+            elif self.nf:
                 return nf_quant_dequant(x, self.qscheme, self.scale).to(x_dtype)
             elif self.sym:
                 return sym_quant_dequant(x, self.scale, self.maxq).to(x_dtype)
@@ -445,16 +611,21 @@ class WeightQuantizer(torch.nn.Module):
         x_dtype = x.dtype
         # x_dtype = torch.float32
         
-        weight_class = QATQuantizedWeights if qat else QuantizedWeights
+        if self.w_quant_scheme in ('ternary', 'binary'):
+            weight_class = CodebookQATQuantizedWeights if qat else CodebookQuantizedWeights
+        else:
+            weight_class = QATQuantizedWeights if qat else QuantizedWeights
 
         if self.ready() and self.bits < 16:
-            if self.nf:
+            if self.w_quant_scheme in ('ternary', 'binary'):
+                return weight_class(x, self.scale, self.w_quant_scheme, dtype=x_dtype, bits=self.bits)
+            elif self.nf:
                 assert not qat, "QAT for NF weight is not implemented"
                 return NFQuantizedWeights(x, self.qscheme, self.scale, dtype=x_dtype)
             elif self.sym:
-                return weight_class(x, self.scale, maxq=self.maxq, dtype=x_dtype)
+                return weight_class(x, self.scale, maxq=self.maxq, dtype=x_dtype, bits=self.bits)
             
-            return weight_class(x, self.scale, self.zero, maxq=self.maxq, dtype=x_dtype)
+            return weight_class(x, self.scale, self.zero, maxq=self.maxq, dtype=x_dtype, bits=self.bits)
         return x
 
     def enabled(self):

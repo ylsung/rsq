@@ -122,6 +122,9 @@ def parser_gen():
                         help='Groupsize for weight quantization. Note that this should be the same as a_groupsize')
     parser.add_argument('--w_asym', action=argparse.BooleanOptionalAction, default=False,
                         help='ASymmetric weight quantization (default: False)')
+    parser.add_argument('--w_quant_scheme', type=str, default='sym',
+                        choices=['sym', 'asym', 'ternary', 'binary'],
+                        help='Weight quantization scheme. `ternary` uses {-1,0,1} and `binary` uses {-1,+1}.')
     parser.add_argument('--w_rtn', action=argparse.BooleanOptionalAction, default=False,
                         help='Quantize the weights using RtN. If the w_bits < 16 and this flag is not set, we use GPTQ')
     parser.add_argument('--w_clip', action=argparse.BooleanOptionalAction, default=False,
@@ -278,6 +281,11 @@ def parser_gen():
 
     if args.model == 'facebook/opt-125m' or args.model == 'facebook/opt-1.3b':
         logging.warning('Warning: OPT-125M/1.3B is only for debugging purposes!!')
+
+    if args.w_quant_scheme == 'asym':
+        args.w_asym = True
+    elif args.w_quant_scheme in ('ternary', 'binary'):
+        args.w_asym = False
 
 
     if args.wandb:
