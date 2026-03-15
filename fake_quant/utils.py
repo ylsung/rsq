@@ -24,6 +24,7 @@ supported_models = [
             'Qwen/Qwen2.5-7B-Instruct',
             'Qwen/Qwen2.5-14B-Instruct',
             'Qwen/Qwen2.5-32B-Instruct',
+            'Qwen/Qwen2.5-72B-Instruct',
             'mistralai/Mistral-7B-Instruct-v0.3',
             'mistralai/Mistral-Nemo-Instruct-2407',
             'mistralai/Mistral-Small-Instruct-2409',
