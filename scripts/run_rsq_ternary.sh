@@ -135,25 +135,25 @@ nsamples=64
 train_seqlen=4096
 
 ### For LLaMA
-# save_name_prefix=llama3-8b-instruct
-# model_name=meta-llama/Meta-Llama-3-8B-Instruct
+save_name_prefix=llama3-70b-instruct
+model_name=meta-llama/Meta-Llama-3-70B-Instruct
 
 # ### For Mistral
 # model_name=mistralai/Mistral-Nemo-Instruct-2407
 # model_store_name=mistral-nemo-instruct-2407
 
 # ### For Qwen
-model_size=72
-save_name_prefix=qwen-2.5-${model_size}B-instruct
-model_name=Qwen/Qwen2.5-${model_size}B-Instruct
+# model_size=72
+# save_name_prefix=qwen-2.5-${model_size}B-instruct
+# model_name=Qwen/Qwen2.5-${model_size}B-Instruct
 
 source scripts/additional_short_eval.sh
 source scripts/env.sh
 
 w_bits=2
-method_name=rsq
+method_name=rsq_binary
 min_value=0.005
-# w_quant_scheme=ternary
+w_quant_scheme=binary
 
 for seed in 0
 do
@@ -164,6 +164,7 @@ do
     --model ${model_name} \
     --rotate \
     --w_bits ${w_bits} --w_clip \
+    --w_quant_scheme ${w_quant_scheme} \
     --seed ${seed} \
     --min_value ${min_value} \
     --max_value 1 \
@@ -195,21 +196,21 @@ done
 
 
 w_bits=2
-method_name=quarot
+method_name=quarot_binary
 
 
 ### For LLaMA 
-# save_name_prefix=llama3-8b-instruct
-# model_name=meta-llama/Meta-Llama-3-8B-Instruct
+save_name_prefix=llama3-70b-instruct
+model_name=meta-llama/Meta-Llama-3-70B-Instruct
 
 # ### For Mistral
 # model_name=mistralai/Mistral-Nemo-Instruct-2407
 # model_store_name=mistral-nemo-instruct-2407
 
 # ### For Qwen
-model_size=72
-save_name_prefix=qwen-2.5-${model_size}B-instruct
-model_name=Qwen/Qwen2.5-${model_size}B-Instruct
+# model_size=72
+# save_name_prefix=qwen-2.5-${model_size}B-instruct
+# model_name=Qwen/Qwen2.5-${model_size}B-Instruct
 
 # load the script to evaluate other tasks
 source scripts/additional_short_eval.sh
@@ -226,6 +227,7 @@ do
     --model ${model_name} \
     --rotate \
     --w_bits ${w_bits} --w_clip \
+    --w_quant_scheme ${w_quant_scheme} \
     --seed ${seed} \
     --add_until_fail \
     --nsamples ${nsamples} \
@@ -262,17 +264,17 @@ nsamples=64
 train_seqlen=4096
 
 ### For LLaMA
-# save_name_prefix=llama3-8b-instruct
-# model_name=meta-llama/Meta-Llama-3-8B-Instruct
+save_name_prefix=llama3-70b-instruct
+model_name=meta-llama/Meta-Llama-3-70B-Instruct
 
 # ### For Mistral
 # model_name=mistralai/Mistral-Nemo-Instruct-2407
 # model_store_name=mistral-nemo-instruct-2407
 
 # ### For Qwen
-model_size=72
-save_name_prefix=qwen-2.5-${model_size}B-instruct
-model_name=Qwen/Qwen2.5-${model_size}B-Instruct
+# model_size=72
+# save_name_prefix=qwen-2.5-${model_size}B-instruct
+# model_name=Qwen/Qwen2.5-${model_size}B-Instruct
 
 source scripts/additional_short_eval.sh
 source scripts/env.sh
@@ -327,17 +329,17 @@ method_name=quarot_ternary
 
 
 ### For LLaMA 
-# save_name_prefix=llama3-8b-instruct
-# model_name=meta-llama/Meta-Llama-3-8B-Instruct
+save_name_prefix=llama3-70b-instruct
+model_name=meta-llama/Meta-Llama-3-70B-Instruct
 
 # ### For Mistral
 # model_name=mistralai/Mistral-Nemo-Instruct-2407
 # model_store_name=mistral-nemo-instruct-2407
 
 # ### For Qwen
-model_size=72
-save_name_prefix=qwen-2.5-${model_size}B-instruct
-model_name=Qwen/Qwen2.5-${model_size}B-Instruct
+# model_size=72
+# save_name_prefix=qwen-2.5-${model_size}B-instruct
+# model_name=Qwen/Qwen2.5-${model_size}B-Instruct
 
 # load the script to evaluate other tasks
 source scripts/additional_short_eval.sh
@@ -361,7 +363,7 @@ do
     --train_seqlen ${train_seqlen} \
     --save_name ${save_name} \
     --lm_eval \
-    --save_qmodel_path ${CHECKPOINT_PATH}/${save_name}.pth \
+    --load_qmodel_path ${CHECKPOINT_PATH}/${save_name}.pth \
     --tasks piqa hellaswag arc_easy arc_challenge winogrande lambada"
 
     echo $job
