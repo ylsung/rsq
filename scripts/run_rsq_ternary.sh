@@ -363,7 +363,7 @@ do
     --train_seqlen ${train_seqlen} \
     --save_name ${save_name} \
     --lm_eval \
-    --load_qmodel_path ${CHECKPOINT_PATH}/${save_name}.pth \
+    --save_qmodel_path ${CHECKPOINT_PATH}/${save_name}.pth \
     --tasks piqa hellaswag arc_easy arc_challenge winogrande lambada"
 
     echo $job
