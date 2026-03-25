@@ -103,9 +103,9 @@ class CodebookQATQuantizedWeights(torch.nn.Module):
 
     def forward(self):
         scale = self.scale.to(self.weight_fp.device)
-        if self.quant_scheme == "ternary":
+        if self.quant_scheme in ("ternary", "ternary_mean"):
             q = clamp_ste(round_ste(self.weight_fp / scale), -1, 1)
-        elif self.quant_scheme == "binary":
+        elif self.quant_scheme in ("binary", "binary_mean"):
             q = torch.where(self.weight_fp >= 0, torch.ones_like(self.weight_fp), -torch.ones_like(self.weight_fp))
         else:
             raise ValueError(f"Unsupported codebook quantization scheme: {self.quant_scheme}")
@@ -121,9 +121,9 @@ class CodebookQuantizedWeights(torch.nn.Module):
         self.dtype = dtype
         self.bits = bits
 
-        if quant_scheme == "ternary":
+        if quant_scheme in ("ternary", "ternary_mean"):
             weight_q = torch.clamp(torch.round(weight / scale), -1, 1)
-        elif quant_scheme == "binary":
+        elif quant_scheme in ("binary", "binary_mean"):
             weight_q = torch.where(weight >= 0, torch.ones_like(weight), -torch.ones_like(weight))
         else:
             raise ValueError(f"Unsupported codebook quantization scheme: {quant_scheme}")
@@ -195,9 +195,9 @@ def quantized_to_codes(q, bits, quant_scheme):
         return two_compl(q, bits).to(torch.int32)
     if quant_scheme == "asym":
         return q
-    if quant_scheme == "binary":
+    if quant_scheme in ("binary", "binary_mean"):
         return torch.where(q > 0, torch.ones_like(q), torch.zeros_like(q))
-    if quant_scheme == "ternary":
+    if quant_scheme in ("ternary", "ternary_mean"):
         return q + 1
     raise ValueError(f"Unsupported quantization scheme: {quant_scheme}")
 
@@ -210,9 +210,9 @@ def codes_to_quantized(codes, bits, quant_scheme):
         return torch.where(codes >= sign_bit, codes - full_range, codes)
     if quant_scheme == "asym":
         return codes
-    if quant_scheme == "binary":
+    if quant_scheme in ("binary", "binary_mean"):
         return torch.where(codes > 0, torch.ones_like(codes), -torch.ones_like(codes))
-    if quant_scheme == "ternary":
+    if quant_scheme in ("ternary", "ternary_mean"):
         return codes - 1
     raise ValueError(f"Unsupported quantization scheme: {quant_scheme}")
 
@@ -493,7 +493,7 @@ class WeightQuantizer(torch.nn.Module):
         self.maxshrink = maxshrink
         self.nf = nf
         self.w_quant_scheme = w_quant_scheme
-
+        
         if self.w_quant_scheme in ('ternary', 'binary'):
             self.maxq = torch.tensor(1)
         elif nf:
@@ -517,25 +517,35 @@ class WeightQuantizer(torch.nn.Module):
         else:
             x = x.flatten().unsqueeze(0)
 
-        if self.w_quant_scheme in ('ternary', 'binary'):
-            self.scale = x.abs().mean(1).clamp(min=1e-5)
-            self.zero = torch.zeros_like(self.scale)
+        # if self.w_quant_scheme in ('ternary', 'binary'):
+        #     self.scale = x.abs().mean(1).clamp(min=1e-5)
+        #     self.zero = torch.zeros_like(self.scale)
 
-            if not self.perchannel:
-                tmp = shape[0]
-                self.scale = self.scale.repeat(tmp)
-                self.zero = self.zero.repeat(tmp)
+        #     if not self.perchannel:
+        #         tmp = shape[0]
+        #         self.scale = self.scale.repeat(tmp)
+        #         self.zero = self.zero.repeat(tmp)
 
-            shape = [-1] + [1] * (len(shape) - 1)
-            self.scale = self.scale.reshape(shape)
-            self.zero = self.zero.reshape(shape)
-            return
+        #     shape = [-1] + [1] * (len(shape) - 1)
+        #     self.scale = self.scale.reshape(shape)
+        #     self.zero = self.zero.reshape(shape)
+        #     return
 
         tmp = torch.zeros(x.shape[0], device=dev)
         xmin = torch.minimum(x.min(1)[0], tmp)
         xmax = torch.maximum(x.max(1)[0], tmp)
-
-        if self.nf:
+        
+        if self.w_quant_scheme in ('ternary', 'binary'):
+            # xmean = x.abs().mean(1).clamp(min=1e-5)
+            x_mean_or_max = torch.maximum(torch.abs(xmin), xmax).clamp(min=1e-5)
+            self.scale = x_mean_or_max
+            self.zero = torch.zeros_like(self.scale)
+        elif self.w_quant_scheme in ('ternary_mean', 'binary_mean'):
+            x_mean_or_max = x.abs().mean(1).clamp(min=1e-5).to(tmp.dtype)
+            # xmean = torch.maximum(torch.abs(xmin), xmax).clamp(min=1e-5)
+            self.scale = x_mean_or_max
+            self.zero = torch.zeros_like(self.scale)
+        elif self.nf:
             xmax = torch.maximum(torch.abs(xmin), xmax).clamp(min=1e-5)
             # print(abs(scheme.values[0]), scheme.values[-1])
             self.scale = xmax / self.grid_max.to(dev)
@@ -543,14 +553,14 @@ class WeightQuantizer(torch.nn.Module):
         elif self.sym:
             xmax = torch.maximum(torch.abs(xmin), xmax).clamp(min=1e-5)
             self.scale = xmax / self.maxq
-            self.zero = torch.zeros_like(self.scale)
+            self.zero = torch.zeros_like(self.scale)  
         else:
             tmp = (xmin == 0) & (xmax == 0)
             xmin[tmp] = -1
             xmax[tmp] = +1
             self.scale = (xmax - xmin).clamp(min=1e-5) / self.maxq
             self.zero = torch.round(-xmin / self.scale)
-
+            
         if self.mse:
             best = torch.full([x.shape[0]], float('inf'), device=dev)
             for i in range(int(self.maxshrink * self.grid)):
@@ -558,7 +568,15 @@ class WeightQuantizer(torch.nn.Module):
                 xmin1 = p * xmin
                 xmax1 = p * xmax
 
-                if self.nf:
+                if self.w_quant_scheme in ('ternary', 'binary', 'ternary_mean', 'binary_mean'):
+                    scale1 = p * x_mean_or_max
+                    zero1 = torch.zeros_like(scale1)
+                    if self.w_quant_scheme in ('ternary', 'ternary_mean'):
+                        q = torch.clamp(torch.round(x / scale1.unsqueeze(1)), -1, 1)
+                    else:
+                        q = torch.where(x >= 0, torch.ones_like(x), -torch.ones_like(x))
+                    q = scale1.unsqueeze(1) * q
+                elif self.nf:
                     scale1 = xmax1 / self.grid_max.to(dev)
                     zero1 = torch.zeros_like(scale1)
                     q = nf_quant_dequant(x, self.qscheme, scale1.unsqueeze(1))
@@ -577,9 +595,12 @@ class WeightQuantizer(torch.nn.Module):
                 err = torch.sum(q, 1)
                 tmp = err < best
                 if torch.any(tmp):
-                    best[tmp] = err[tmp]
-                    self.scale[tmp] = scale1[tmp]
-                    self.zero[tmp] = zero1[tmp]
+                    try:
+                        best[tmp] = err[tmp]
+                        self.scale[tmp] = scale1[tmp]
+                        self.zero[tmp] = zero1[tmp]
+                    except:
+                        breakpoint()
         if not self.perchannel:
 
             tmp = shape[0]
@@ -595,9 +616,9 @@ class WeightQuantizer(torch.nn.Module):
     def forward(self, x):
         x_dtype = x.dtype
         if self.ready() and self.bits < 16:
-            if self.w_quant_scheme == 'ternary':
+            if self.w_quant_scheme in ('ternary', 'ternary_mean'):
                 return (self.scale * torch.clamp(torch.round(x / self.scale), -1, 1)).to(x_dtype)
-            elif self.w_quant_scheme == 'binary':
+            elif self.w_quant_scheme in ('binary', 'binary_mean'):
                 q = torch.where(x >= 0, torch.ones_like(x), -torch.ones_like(x))
                 return (self.scale * q).to(x_dtype)
             elif self.nf:
@@ -611,13 +632,13 @@ class WeightQuantizer(torch.nn.Module):
         x_dtype = x.dtype
         # x_dtype = torch.float32
         
-        if self.w_quant_scheme in ('ternary', 'binary'):
+        if self.w_quant_scheme in ('ternary', 'binary', 'ternary_mean', 'binary_mean'):
             weight_class = CodebookQATQuantizedWeights if qat else CodebookQuantizedWeights
         else:
             weight_class = QATQuantizedWeights if qat else QuantizedWeights
 
         if self.ready() and self.bits < 16:
-            if self.w_quant_scheme in ('ternary', 'binary'):
+            if self.w_quant_scheme in ('ternary', 'binary', 'ternary_mean', 'binary_mean'):
                 return weight_class(x, self.scale, self.w_quant_scheme, dtype=x_dtype, bits=self.bits)
             elif self.nf:
                 assert not qat, "QAT for NF weight is not implemented"
